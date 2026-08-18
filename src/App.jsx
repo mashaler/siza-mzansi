@@ -1,11 +1,15 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Home, Search, FileText, User, Briefcase, ChevronRight, ChevronLeft,
   Check, X, AlertTriangle, MapPin, Clock, TrendingUp, Shield,
   MessageSquare, Plus, Sparkles, Award, BookOpen, Bell, ArrowRight,
   Upload, Download, ShieldCheck, ShieldAlert, ShieldQuestion, Users,
-  BarChart3, Flag, Settings, LogOut, GraduationCap, Building2, Star
+  BarChart3, Flag, Settings, LogOut, GraduationCap, Building2, Star,
+  Loader2, Mail, Lock, Eye, EyeOff
 } from "lucide-react";
+import { supabase } from "./lib/supabaseClient";
+import * as api from "./lib/api";
+import { withMatchScores } from "./lib/matching";
 
 /* ---------------------------------------------------------------
    DESIGN TOKENS
@@ -34,68 +38,11 @@ const T = {
 };
 
 /* ---------------------------------------------------------------
-   MOCK DATA
+   ADMIN-ONLY DEMO DATA
+   Reported opportunities and platform stats don't have DB tables
+   yet (no scam-report submission flow or usage-analytics queries
+   built out) — these stay illustrative until that's built.
 ----------------------------------------------------------------*/
-const OPPORTUNITIES = [
-  {
-    id: "o1", title: "Junior Software Tester", org: "Thusong Digital",
-    type: "Job", location: "Johannesburg", province: "Gauteng",
-    closing: "28 Aug 2026", experience: "0–1 years", salary: "R14,000 – R18,000/mo",
-    match: 92, verified: true,
-    reasons: ["Your Java coursework matches", "Testing project on your CV matches", "Location matches your preference"],
-    gaps: ["SQL experience preferred"],
-    description: "Join a small QA team supporting a retail banking client. You'll write manual test cases, learn automation basics on Playwright, and pair with senior testers.",
-    requirements: ["Matric + IT-related qualification", "Basic understanding of SDLC", "Strong attention to detail"],
-  },
-  {
-    id: "o2", title: "Graduate Data Analyst Programme", org: "Kagiso Insurance Group",
-    type: "Graduate Programme", location: "Sandton", province: "Gauteng",
-    closing: "05 Sep 2026", experience: "Graduate", salary: "R16,500/mo",
-    match: 78, verified: true,
-    reasons: ["Statistics major matches", "Excel proficiency matches"],
-    gaps: ["Python not yet on your profile", "Power BI not yet on your profile"],
-    description: "A 12-month structured graduate programme rotating through underwriting, claims and actuarial analytics teams.",
-    requirements: ["BSc/BCom with Statistics or similar", "Strong Excel skills", "Willingness to relocate to Sandton"],
-  },
-  {
-    id: "o3", title: "IT Support Learnership (NQF4)", org: "Vodacom Foundation",
-    type: "Learnership", location: "Midrand", province: "Gauteng",
-    closing: "12 Sep 2026", experience: "Entry level", salary: "R4,500/mo stipend",
-    match: 65, verified: true,
-    reasons: ["Matric requirement met"],
-    gaps: ["No formal IT support experience yet", "CompTIA A+ not listed"],
-    description: "A 12-month accredited learnership combining classroom training with on-the-job IT service desk experience.",
-    requirements: ["Matric with Maths or Maths Literacy", "South African citizen aged 18–28", "Not currently studying full-time"],
-  },
-  {
-    id: "o4", title: "Marketing Internship", org: "Nandi & Co Communications",
-    type: "Internship", location: "Cape Town", province: "Western Cape",
-    closing: "30 Aug 2026", experience: "0–1 years", salary: "R6,000/mo stipend",
-    match: 41, verified: false,
-    reasons: ["Communication skills listed on profile"],
-    gaps: ["Location doesn't match your preference", "No marketing coursework on profile"],
-    description: "6-month internship supporting social content, client reporting and campaign coordination for a boutique agency.",
-    requirements: ["Diploma or degree in Marketing/Communications", "Own laptop", "Portfolio of written work"],
-  },
-  {
-    id: "o5", title: "Sasol Engineering Bursary 2027", org: "Sasol",
-    type: "Bursary", location: "Secunda", province: "Mpumalanga",
-    closing: "20 Sep 2026", experience: "Matric / 1st year", salary: "Full cover + stipend",
-    match: 55, verified: true,
-    reasons: ["Maths & Science subjects match"],
-    gaps: ["Application essay not yet started"],
-    description: "Full bursary covering tuition, accommodation and a monthly allowance for students pursuing Chemical or Mechanical Engineering.",
-    requirements: ["Matric with 70%+ in Maths & Physical Science", "South African citizen", "Household income below threshold"],
-  },
-];
-
-const APPLICATIONS_SEED = [
-  { id: "a1", title: "Junior Software Tester", org: "Thusong Digital", status: "Interview", appliedDate: "02 Aug 2026", interviewDate: "22 Aug 2026, 10:00", notes: "Panel interview via Teams, ask about test automation tooling." },
-  { id: "a2", title: "IT Support Learnership (NQF4)", org: "Vodacom Foundation", status: "Applied", appliedDate: "10 Aug 2026", interviewDate: "", notes: "" },
-  { id: "a3", title: "Data Capturer", org: "Gauteng Dept of Health", status: "Rejected", appliedDate: "15 Jul 2026", interviewDate: "", notes: "Position filled internally." },
-  { id: "a4", title: "Graduate Data Analyst Programme", org: "Kagiso Insurance Group", status: "Saved", appliedDate: "", interviewDate: "", notes: "" },
-];
-
 const STATUS_ORDER = ["Saved", "Planning to Apply", "Applied", "Assessment", "Interview", "Offer", "Rejected", "Withdrawn"];
 const STATUS_COLOR = {
   Saved: T.inkMuted, "Planning to Apply": T.indigo, Applied: T.amberDeep,
@@ -346,10 +293,121 @@ function Landing({ onStart }) {
 }
 
 /* ---------------------------------------------------------------
+   AUTH — real Supabase email/password sign up + login.
+   Saved jobs, applications and your profile are all scoped to your
+   user id in the database, so an account is required past this point.
+----------------------------------------------------------------*/
+function AuthScreen({ onBack }) {
+  const [mode, setMode] = useState("signup"); // signup | login
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!email.trim() || !password) { setError("Enter an email and password."); return; }
+    if (password.length < 6) { setError("Password needs to be at least 6 characters."); return; }
+    setLoading(true);
+    try {
+      if (mode === "signup") {
+        const { error: err } = await supabase.auth.signUp({ email: email.trim(), password });
+        if (err) throw err;
+      } else {
+        const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (err) throw err;
+      }
+      // On success, onAuthStateChange in the root component picks up the
+      // new session and moves the app forward automatically.
+    } catch (err) {
+      setError(err.message || "Something went wrong. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ height: "100%", background: T.paper, display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "calc(env(safe-area-inset-top) + 16px) 20px 0" }}>
+        <button onClick={onBack} aria-label="Back" style={{ color: T.ink, marginBottom: 20 }}><ChevronLeft size={22} /></button>
+      </div>
+      <div className="sm-scroll" style={{ flex: 1, overflowY: "auto", padding: "0 20px" }}>
+        <h1 className="f-display" style={{ fontSize: 22, fontWeight: 700, color: T.ink, marginBottom: 6 }}>
+          {mode === "signup" ? "Create your account" : "Welcome back"}
+        </h1>
+        <p className="f-body" style={{ fontSize: 13, color: T.inkMuted, marginBottom: 20 }}>
+          {mode === "signup" ? "Takes under a minute. We'll never share your details." : "Log in to see your saved jobs and applications."}
+        </p>
+
+        <div className="flex" style={{ gap: 8, marginBottom: 20, background: T.surfaceSunk, borderRadius: 12, padding: 4 }}>
+          {[["signup", "Sign up"], ["login", "Log in"]].map(([k, l]) => (
+            <button key={k} type="button" onClick={() => { setMode(k); setError(""); }} className="f-body"
+              style={{ flex: 1, fontSize: 13, fontWeight: 600, padding: "9px 0", borderRadius: 9, background: mode === k ? T.surface : "transparent", color: mode === k ? T.ink : T.inkMuted }}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={submit} style={{ display: "grid", gap: 14 }}>
+          <label className="f-body" style={{ display: "block" }}>
+            <span style={{ fontSize: 12, color: T.inkMuted, fontWeight: 600, marginBottom: 5, display: "block" }}>Email</span>
+            <div className="flex items-center" style={{ gap: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px" }}>
+              <Mail size={15} color={T.inkFaint} />
+              <input
+                type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email"
+                style={{ flex: 1, border: "none", outline: "none", fontSize: 14, color: T.ink, background: "transparent" }}
+              />
+            </div>
+          </label>
+          <label className="f-body" style={{ display: "block" }}>
+            <span style={{ fontSize: 12, color: T.inkMuted, fontWeight: 600, marginBottom: 5, display: "block" }}>Password</span>
+            <div className="flex items-center" style={{ gap: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px" }}>
+              <Lock size={15} color={T.inkFaint} />
+              <input
+                type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="At least 6 characters" autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                style={{ flex: 1, border: "none", outline: "none", fontSize: 14, color: T.ink, background: "transparent" }}
+              />
+              <button type="button" onClick={() => setShowPw((s) => !s)} aria-label={showPw ? "Hide password" : "Show password"} style={{ color: T.inkFaint }}>
+                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </label>
+
+          {error && (
+            <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px" }}>
+              <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+            </div>
+          )}
+
+          <button
+            type="submit" disabled={loading} className="f-body flex items-center justify-center"
+            style={{ width: "100%", gap: 8, background: T.amber, color: "#221503", fontWeight: 700, fontSize: 14.5, padding: "13px 0", borderRadius: 12, opacity: loading ? 0.7 : 1, marginTop: 4 }}
+          >
+            {loading && <Loader2 size={16} className="spin" />}
+            {mode === "signup" ? "Create account" : "Log in"}
+          </button>
+        </form>
+
+        {mode === "signup" && (
+          <p className="f-body" style={{ fontSize: 11, color: T.inkFaint, marginTop: 14, lineHeight: 1.5 }}>
+            Supabase may ask you to confirm your email before your first login, depending on your project's auth settings.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    STAGE 1 — ONBOARDING
 ----------------------------------------------------------------*/
-function Onboarding({ onFinish }) {
+function Onboarding({ userId, onFinish }) {
   const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const [form, setForm] = useState({
     name: "", phone: "", province: "", city: "",
     education: "", fieldOfStudy: "", experience: "", skills: "",
@@ -359,19 +417,17 @@ function Onboarding({ onFinish }) {
   const stepPct = Math.round(((step + 1) / steps.length) * 100);
   const set = (key) => (val) => setForm((f) => ({ ...f, [key]: val }));
 
-  const finish = (data) => {
-    const filled = Object.entries(data).filter(([k, v]) => {
-      if (k === "relocate" || k === "remote") return true; // booleans always "answered"
-      return String(v).trim().length > 0;
-    }).length;
-    const completion = Math.max(20, Math.round((filled / Object.keys(data).length) * 100));
-    onFinish({
-      name: data.name.trim() || "New user",
-      title: data.jobTitle.trim() || "Job seeker",
-      location: data.city.trim() || data.province.trim() || "South Africa",
-      completion,
-      raw: data,
-    });
+  const finish = async (data) => {
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await api.saveProfile(userId, data);
+      onFinish(api.toAppProfile(saved));
+    } catch (err) {
+      setError(err.message || "Couldn't save your profile — check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -379,7 +435,7 @@ function Onboarding({ onFinish }) {
       <div style={{ padding: "20px 20px 0" }}>
         <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
           <span className="f-display" style={{ fontWeight: 700, color: T.ink, fontSize: 16 }}>Set up your profile</span>
-          <button onClick={() => finish(form)} className="f-body" style={{ color: T.inkMuted, fontSize: 13 }}>Skip</button>
+          <button onClick={() => finish(form)} disabled={saving} className="f-body" style={{ color: T.inkMuted, fontSize: 13, opacity: saving ? 0.5 : 1 }}>Skip</button>
         </div>
         <div style={{ height: 6, background: T.surfaceSunk, borderRadius: 999, overflow: "hidden" }}>
           <div style={{ height: "100%", width: `${stepPct}%`, background: T.amber, transition: "width .4s ease" }} />
@@ -420,13 +476,22 @@ function Onboarding({ onFinish }) {
         )}
       </div>
 
-      <div style={{ padding: 20, borderTop: `1px solid ${T.border}` }}>
+      <div style={{ padding: "0 20px" }}>
+        {error && (
+          <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+            <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+          </div>
+        )}
+      </div>
+      <div style={{ padding: "0 20px 20px", borderTop: `1px solid ${T.border}`, paddingTop: 20 }}>
         <button
           onClick={() => (step < 2 ? setStep(step + 1) : finish(form))}
-          className="f-body"
-          style={{ width: "100%", background: T.ink, color: "#fff", fontWeight: 600, fontSize: 14.5, padding: "13px 0", borderRadius: 12 }}
+          disabled={saving}
+          className="f-body flex items-center justify-center"
+          style={{ width: "100%", gap: 8, background: T.ink, color: "#fff", fontWeight: 600, fontSize: 14.5, padding: "13px 0", borderRadius: 12, opacity: saving ? 0.7 : 1 }}
         >
-          {step < 2 ? "Continue" : "Finish set up"}
+          {saving && <Loader2 size={16} className="spin" />}
+          {step < 2 ? "Continue" : saving ? "Saving..." : "Finish set up"}
         </button>
       </div>
     </div>
@@ -897,7 +962,7 @@ function ReviewBlock({ title, icon: Icon, color, bg, items }) {
 /* ---------------------------------------------------------------
    PROFILE TAB
 ----------------------------------------------------------------*/
-function ProfileTab({ profile, onOpenTool, onToggleAdmin, onReset }) {
+function ProfileTab({ profile, email, onOpenTool, onToggleAdmin, onLogout }) {
   return (
     <div style={{ padding: "18px 16px 90px" }}>
       <h1 className="f-display" style={{ fontSize: 20, fontWeight: 700, color: T.ink, marginBottom: 18 }}>Profile</h1>
@@ -905,9 +970,10 @@ function ProfileTab({ profile, onOpenTool, onToggleAdmin, onReset }) {
         <div style={{ width: 58, height: 58, borderRadius: "50%", background: T.indigo, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <span className="f-display" style={{ color: "#fff", fontWeight: 700, fontSize: 20 }}>{profile.name[0]}</span>
         </div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <p className="f-display" style={{ fontWeight: 700, fontSize: 16, color: T.ink }}>{profile.name}</p>
           <p className="f-body" style={{ fontSize: 12.5, color: T.inkMuted }}>{profile.title} · {profile.location}</p>
+          {email && <p className="f-body" style={{ fontSize: 11, color: T.inkFaint, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</p>}
         </div>
         <Ring value={profile.completion} size={44} stroke={5} color={T.teal}>
           <span className="f-mono" style={{ fontSize: 11, color: T.teal, fontWeight: 600 }}>{profile.completion}%</span>
@@ -947,14 +1013,8 @@ function ProfileTab({ profile, onOpenTool, onToggleAdmin, onReset }) {
       <button onClick={onToggleAdmin} className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, marginTop: 16, background: T.indigoSoft, color: T.indigo, fontWeight: 600, fontSize: 13, padding: "11px 0", borderRadius: 12 }}>
         <Building2 size={15} /> View admin dashboard (demo)
       </button>
-      <button className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, marginTop: 10, color: T.coral, fontWeight: 600, fontSize: 13, padding: "10px 0" }}>
+      <button onClick={onLogout} className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, marginTop: 10, color: T.coral, fontWeight: 600, fontSize: 13, padding: "10px 0" }}>
         <LogOut size={15} /> Log out
-      </button>
-      <button
-        onClick={() => { if (window.confirm("Reset all demo data (saved jobs, applications, profile)? This can't be undone.")) onReset(); }}
-        className="f-body" style={{ width: "100%", marginTop: 4, color: T.inkFaint, fontWeight: 500, fontSize: 11.5, padding: "8px 0" }}
-      >
-        Reset demo data
       </button>
     </div>
   );
@@ -1164,7 +1224,7 @@ function ScamChecker({ onBack }) {
 /* ---------------------------------------------------------------
    ADMIN DASHBOARD
 ----------------------------------------------------------------*/
-function AdminDashboard({ onExit }) {
+function AdminDashboard({ onExit, opportunities }) {
   const [tab, setTab] = useState("overview");
   return (
     <div style={{ height: "100%", background: T.paper, display: "flex", flexDirection: "column" }}>
@@ -1205,7 +1265,7 @@ function AdminDashboard({ onExit }) {
             <button className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, background: T.ink, color: "#fff", fontWeight: 600, fontSize: 13.5, padding: "12px 0", borderRadius: 12, marginBottom: 14 }}>
               <Plus size={16} /> Create opportunity
             </button>
-            {OPPORTUNITIES.map((o) => (
+            {opportunities.map((o) => (
               <div key={o.id} className="flex items-center justify-between" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, marginBottom: 8 }}>
                 <div>
                   <p style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{o.title}</p>
@@ -1260,37 +1320,6 @@ function BottomNav({ active, onChange }) {
 }
 
 /* ---------------------------------------------------------------
-   ROOT APP
-----------------------------------------------------------------*/
-/* ---------------------------------------------------------------
-   PERSISTENCE
-   Real device storage, not artifact sandbox storage — this is a
-   deployed app, so localStorage is the right tool: it survives
-   refreshes and closing the browser, scoped to one device/browser.
-----------------------------------------------------------------*/
-const STORAGE_KEY = "siza-mzansi:v1";
-const DEFAULT_PROFILE = { name: "Guest", title: "Job seeker", location: "South Africa", completion: 20 };
-
-function loadPersisted() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return { ...parsed, saved: new Set(parsed.saved || []) };
-  } catch {
-    return null; // corrupted or blocked storage — fall back to defaults, don't crash
-  }
-}
-
-function savePersisted(state) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, saved: Array.from(state.saved) }));
-  } catch {
-    // storage full or unavailable (e.g. private browsing) — fail silently, app still works this session
-  }
-}
-
-/* ---------------------------------------------------------------
    ERROR BOUNDARY
    Catches render errors so a bug in one screen shows a recoverable
    message instead of a blank white screen on a user's phone.
@@ -1305,7 +1334,7 @@ class ErrorBoundary extends React.Component {
         <div className="f-body" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", background: T.paper }}>
           <AlertTriangle size={28} color={T.coral} style={{ marginBottom: 12 }} />
           <p className="f-display" style={{ fontWeight: 700, fontSize: 16, color: T.ink, marginBottom: 6 }}>Something went wrong</p>
-          <p style={{ fontSize: 13, color: T.inkMuted, marginBottom: 18 }}>This screen hit an error. Your saved data is safe — reloading should fix it.</p>
+          <p style={{ fontSize: 13, color: T.inkMuted, marginBottom: 18 }}>This screen hit an error. Reloading should fix it.</p>
           <button
             onClick={() => { this.setState({ error: null }); window.location.reload(); }}
             className="f-body" style={{ background: T.ink, color: "#fff", fontWeight: 600, fontSize: 13.5, padding: "11px 22px", borderRadius: 10 }}
@@ -1319,54 +1348,168 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+function FullScreenLoader({ label = "Loading..." }) {
+  return (
+    <div className="f-body" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: T.paper }}>
+      <Loader2 size={22} color={T.inkMuted} className="spin" />
+      <p style={{ fontSize: 12.5, color: T.inkMuted }}>{label}</p>
+    </div>
+  );
+}
+
+function FullScreenError({ message, onRetry }) {
+  return (
+    <div className="f-body" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, textAlign: "center", background: T.paper }}>
+      <AlertTriangle size={24} color={T.coral} />
+      <p style={{ fontSize: 13, color: T.inkMuted }}>{message}</p>
+      <button onClick={onRetry} className="f-body" style={{ background: T.ink, color: "#fff", fontWeight: 600, fontSize: 13, padding: "10px 20px", borderRadius: 10 }}>
+        Try again
+      </button>
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------
    ROOT APP
+   Data flow: Supabase Auth gives us a session -> we fetch that
+   user's profile row -> opportunities are public and load
+   independently -> saved jobs & applications load once we have a
+   user id. Nothing here is hardcoded; everything comes from the
+   database wired up in supabase/schema.sql.
 ----------------------------------------------------------------*/
 function SizaMzansiApp() {
-  const persisted = useMemo(() => loadPersisted(), []);
-  const [stage, setStage] = useState(persisted?.stage || "landing"); // landing | onboarding | app
+  const [session, setSession] = useState(undefined); // undefined = checking, null = logged out
+  const [authView, setAuthView] = useState("landing"); // landing | auth (only used while logged out)
+  const [profile, setProfile] = useState(null); // app-shaped, via api.toAppProfile
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [opportunities, setOpportunities] = useState([]);
+  const [savedIds, setSavedIds] = useState(new Set());
+  const [applications, setApplications] = useState([]);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [dataError, setDataError] = useState("");
   const [tab, setTab] = useState("home");
   const [overlay, setOverlay] = useState(null); // { type, data }
   const [adminMode, setAdminMode] = useState(false);
-  const [saved, setSaved] = useState(persisted?.saved || new Set(["o2"]));
-  const [applications, setApplications] = useState(persisted?.applications || APPLICATIONS_SEED);
-  const [profile, setProfile] = useState(persisted?.profile || DEFAULT_PROFILE);
 
-  // Persist the parts of state worth surviving a refresh. Nav/overlay state
-  // is deliberately excluded — always start a fresh visit on Home.
-  React.useEffect(() => {
-    savePersisted({ stage, saved, applications, profile });
-  }, [stage, saved, applications, profile]);
+  // Track auth state.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (!newSession) {
+        // Logged out — clear everything user-specific.
+        setProfile(null);
+        setSavedIds(new Set());
+        setApplications([]);
+        setAdminMode(false);
+        setOverlay(null);
+        setTab("home");
+        setAuthView("landing");
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
-  const toggleSave = (id) => setSaved((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Opportunities are public — load them regardless of auth state.
+  useEffect(() => {
+    api.fetchOpportunities().then(setOpportunities).catch((err) => console.error("Failed to load opportunities:", err));
+  }, []);
 
-  const applyToOpportunity = (o) => {
-    setApplications((prev) => [{ id: `a${Date.now()}`, title: o.title, org: o.org, status: "Applied", appliedDate: new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }), interviewDate: "", notes: "" }, ...prev]);
-    setOverlay(null);
-    setTab("applications");
+  const loadUserData = async (userId) => {
+    setDataLoading(true);
+    setDataError("");
+    try {
+      const [profileRow, savedSet, apps] = await Promise.all([
+        api.fetchProfile(userId),
+        api.fetchSavedIds(userId),
+        api.fetchApplications(userId),
+      ]);
+      const appProfile = api.toAppProfile(profileRow);
+      setProfile(appProfile);
+      setNeedsOnboarding((profileRow?.completion ?? 20) <= 20);
+      setSavedIds(savedSet);
+      setApplications(apps);
+    } catch (err) {
+      setDataError(err.message || "Couldn't load your data. Check your connection and try again.");
+    } finally {
+      setDataLoading(false);
+    }
   };
 
-  const changeAppStatus = (id, status) => setApplications((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
+  // Once we have a session, load that user's data.
+  useEffect(() => {
+    if (session?.user) loadUserData(session.user.id);
+  }, [session?.user?.id]);
 
-  const resetDemoData = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    setSaved(new Set(["o2"]));
-    setApplications(APPLICATIONS_SEED);
-    setProfile(DEFAULT_PROFILE);
-    setAdminMode(false);
-    setOverlay(null);
-    setTab("home");
-    setStage("landing");
+  const matchedOpportunities = useMemo(
+    () => withMatchScores(profile?.raw, opportunities),
+    [profile, opportunities]
+  );
+
+  const toggleSave = async (id) => {
+    const wasSaved = savedIds.has(id);
+    setSavedIds((s) => { const n = new Set(s); wasSaved ? n.delete(id) : n.add(id); return n; }); // optimistic
+    try {
+      await api.toggleSavedOpportunity(session.user.id, id, wasSaved);
+    } catch (err) {
+      setSavedIds((s) => { const n = new Set(s); wasSaved ? n.add(id) : n.delete(id); return n; }); // revert
+      console.error("Failed to save opportunity:", err);
+    }
+  };
+
+  const applyToOpportunity = async (o) => {
+    try {
+      const created = await api.createApplication(session.user.id, o);
+      setApplications((prev) => [{
+        id: created.id, title: created.title, org: created.org, status: created.status,
+        appliedDate: new Date(created.applied_date).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }),
+        interviewDate: "", notes: "",
+      }, ...prev]);
+      setOverlay(null);
+      setTab("applications");
+    } catch (err) {
+      console.error("Failed to create application:", err);
+    }
+  };
+
+  const changeAppStatus = async (id, status) => {
+    setApplications((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a))); // optimistic
+    try {
+      await api.updateApplicationStatus(id, status);
+    } catch (err) {
+      console.error("Failed to update application status:", err);
+    }
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
   };
 
   let body;
-  if (stage === "landing") body = <Landing onStart={() => setStage("onboarding")} />;
-  else if (stage === "onboarding") body = <Onboarding onFinish={(data) => { setProfile(data); setStage("app"); }} />;
-  else if (adminMode) body = <AdminDashboard onExit={() => setAdminMode(false)} />;
-  else if (overlay?.type === "opportunity") {
+
+  if (session === undefined) {
+    body = <FullScreenLoader label="Checking your session..." />;
+  } else if (!session) {
+    body = authView === "landing"
+      ? <Landing onStart={() => setAuthView("auth")} />
+      : <AuthScreen onBack={() => setAuthView("landing")} />;
+  } else if (dataLoading || !profile) {
+    body = dataError
+      ? <FullScreenError message={dataError} onRetry={() => loadUserData(session.user.id)} />
+      : <FullScreenLoader label="Setting things up..." />;
+  } else if (needsOnboarding) {
+    body = (
+      <Onboarding
+        userId={session.user.id}
+        onFinish={(newProfile) => { setProfile(newProfile); setNeedsOnboarding(false); }}
+      />
+    );
+  } else if (adminMode) {
+    body = <AdminDashboard onExit={() => setAdminMode(false)} opportunities={matchedOpportunities} />;
+  } else if (overlay?.type === "opportunity") {
     body = (
       <OpportunityDetail
-        o={overlay.data} saved={saved.has(overlay.data.id)} onToggleSave={toggleSave}
+        o={overlay.data} saved={savedIds.has(overlay.data.id)} onToggleSave={toggleSave}
         onBack={() => setOverlay(null)} applications={applications} onApply={applyToOpportunity}
         onPrepInterview={(o) => setOverlay({ type: "interview", data: o })}
       />
@@ -1380,12 +1523,13 @@ function SizaMzansiApp() {
   } else if (overlay?.type === "scam") {
     body = <ScamChecker onBack={() => setOverlay(null)} />;
   } else {
+    const openOpportunity = (id) => setOverlay({ type: "opportunity", data: matchedOpportunities.find((o) => o.id === id) });
     const tabBody =
-      tab === "home" ? <HomeTab opportunities={OPPORTUNITIES} saved={saved} onToggleSave={toggleSave} onOpen={(id) => setOverlay({ type: "opportunity", data: OPPORTUNITIES.find((o) => o.id === id) })} profile={profile} />
-      : tab === "opportunities" ? <OpportunitiesTab opportunities={OPPORTUNITIES} saved={saved} onToggleSave={toggleSave} onOpen={(id) => setOverlay({ type: "opportunity", data: OPPORTUNITIES.find((o) => o.id === id) })} />
+      tab === "home" ? <HomeTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} profile={profile} />
+      : tab === "opportunities" ? <OpportunitiesTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} />
       : tab === "applications" ? <ApplicationsTab applications={applications} onOpenApp={(a) => setOverlay({ type: "application", data: a })} />
       : tab === "cv" ? <CvTab />
-      : <ProfileTab profile={profile} onOpenTool={(k) => setOverlay({ type: k })} onToggleAdmin={() => setAdminMode(true)} onReset={resetDemoData} />;
+      : <ProfileTab profile={profile} email={session.user.email} onOpenTool={(k) => setOverlay({ type: k })} onToggleAdmin={() => setAdminMode(true)} onLogout={logout} />;
 
     body = (
       <div style={{ height: "100%", position: "relative" }}>
