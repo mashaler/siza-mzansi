@@ -1,0 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #E7E2D3;
+}
+
+.f-display {
+  font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+}
+.f-body {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+.f-mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.sm-scroll::-webkit-scrollbar {
+  display: none;
+}
+.sm-scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid #C1791F;
+  outline-offset: 2px;
+}
+
+/* Desktop / tablet: show the app inside a phone-shaped preview frame */
+.phone-outer {
+  min-height: 100dvh;
+  align-items: center;
+  padding: 24px 0;
+}
+.phone-frame {
+  width: 390px;
+  height: 780px;
+  border-radius: 36px;
+  overflow: hidden;
+  border: 8px solid #1C2130;
+  box-shadow: 0 30px 60px -20px rgba(28, 33, 48, 0.35);
+}
+
+/* Real phones: fill the actual screen, no mock frame around it, and
+   respect the notch / home-indicator safe areas */
+@media (max-width: 480px) {
+  .phone-outer {
+    padding: 0;
+    min-height: 100dvh;
+  }
+  .phone-frame {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+  }
+}
