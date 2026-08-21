@@ -36,6 +36,7 @@ export async function fetchOpportunities() {
     closing: o.closing
       ? new Date(o.closing).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })
       : "TBC",
+    closingRaw: o.closing || null,
     experience: o.experience,
     salary: o.salary,
     description: o.description,
@@ -127,14 +128,17 @@ export async function fetchApplications(userId) {
     appliedDate: a.applied_date
       ? new Date(a.applied_date).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })
       : "",
+    appliedDateRaw: a.applied_date || null,
     interviewDate: a.interview_date
       ? new Date(a.interview_date).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
       : "",
+    interviewDateRaw: a.interview_date || null,
     notes: a.notes || "",
   }));
 }
 
 export async function createApplication(userId, opportunity) {
+  const applied_date = new Date().toISOString().slice(0, 10);
   const { data, error } = await supabase
     .from("applications")
     .insert({
@@ -143,7 +147,7 @@ export async function createApplication(userId, opportunity) {
       title: opportunity.title,
       org: opportunity.org,
       status: "Applied",
-      applied_date: new Date().toISOString().slice(0, 10),
+      applied_date,
     })
     .select()
     .single();

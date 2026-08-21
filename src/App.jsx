@@ -10,6 +10,7 @@ import {
 import { supabase } from "./lib/supabaseClient";
 import * as api from "./lib/api";
 import { withMatchScores } from "./lib/matching";
+import { buildNotifications } from "./lib/notifications";
 
 /* ---------------------------------------------------------------
    DESIGN TOKENS
@@ -629,7 +630,7 @@ function Toggle({ checked, onChange, defaultOn = false, label }) {
 /* ---------------------------------------------------------------
    HOME TAB
 ----------------------------------------------------------------*/
-function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile }) {
+function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile, notificationCount, onOpenNotifications }) {
   const [filter, setFilter] = useState("Recommended");
   const greeting = useSAGreeting();
   const tabs = ["Recommended", "New", "Learnerships", "Internships", "Bursaries"];
@@ -649,10 +650,12 @@ function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile }) {
           <p className="f-body" style={{ fontSize: 13, color: T.inkMuted }}>{greeting}</p>
           <h1 className="f-display" style={{ fontSize: 21, fontWeight: 700, color: T.ink }}>{profile.name} 👋</h1>
         </div>
-        <div style={{ position: "relative" }}>
+        <button onClick={onOpenNotifications} aria-label={notificationCount > 0 ? `Notifications, ${notificationCount} unread` : "Notifications"} style={{ position: "relative", padding: 4 }}>
           <Bell size={20} color={T.ink} />
-          <div style={{ position: "absolute", top: -2, right: -2, width: 8, height: 8, borderRadius: "50%", background: T.coral }} />
-        </div>
+          {notificationCount > 0 && (
+            <div style={{ position: "absolute", top: 0, right: 0, minWidth: 8, height: 8, borderRadius: "50%", background: T.coral }} />
+          )}
+        </button>
       </div>
 
       <div style={{ background: T.indigo, borderRadius: 18, padding: 18, marginBottom: 18 }} className="flex items-center justify-between">
@@ -1595,6 +1598,52 @@ function QBlock({ title, items, color, bg }) {
 }
 
 /* ---------------------------------------------------------------
+   NOTIFICATIONS FEED — everything here is computed live from real
+   data (see lib/notifications.js). No invented counts, no fake items.
+----------------------------------------------------------------*/
+const NOTIF_ICON = { profileIncomplete: User, interviewReminder: MessageSquare, closingSoon: Clock, followUp: Briefcase };
+const NOTIF_COLOR = { amber: { c: T.amberDeep, bg: T.amberSoft }, teal: { c: T.teal, bg: T.tealSoft }, coral: { c: T.coral, bg: T.coralSoft }, indigo: { c: T.indigo, bg: T.indigoSoft } };
+
+function NotificationsFeed({ items, onBack, onOpenOpportunity, onOpenApplication, onGoToProfile }) {
+  const handleClick = (n) => {
+    if (n.action === "profile") onGoToProfile();
+    else if (n.action === "application") onOpenApplication(n.data);
+    else if (n.action === "opportunity") onOpenOpportunity(n.data);
+  };
+
+  return (
+    <div style={{ height: "100%", background: T.paper }}>
+      <TopBar title="Notifications" onBack={onBack} />
+      <div style={{ padding: 16 }}>
+        {items.length === 0 ? (
+          <EmptyState icon={Bell} title="You're all caught up" body="Nothing needs your attention right now." />
+        ) : (
+          items.map((n) => {
+            const Icon = NOTIF_ICON[n.kind] || Bell;
+            const colors = NOTIF_COLOR[n.tone] || NOTIF_COLOR.indigo;
+            return (
+              <button
+                key={n.id} onClick={() => handleClick(n)} className="f-body"
+                style={{ display: "flex", alignItems: "flex-start", gap: 12, width: "100%", textAlign: "left", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 13, marginBottom: 8 }}
+              >
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: colors.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon size={16} color={colors.c} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, marginBottom: 2 }}>{n.title}</p>
+                  <p style={{ fontSize: 12, color: T.inkMuted, lineHeight: 1.4 }}>{n.body}</p>
+                </div>
+                <ChevronRight size={15} color={T.inkFaint} style={{ flexShrink: 0, marginTop: 2 }} />
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    SCAM CHECKER OVERLAY
 ----------------------------------------------------------------*/
 function ScamChecker({ onBack }) {
@@ -1957,6 +2006,11 @@ function SizaMzansiApp() {
     [profile, opportunities]
   );
 
+  const notifications = useMemo(
+    () => (profile ? buildNotifications(profile, matchedOpportunities, savedIds, applications) : []),
+    [profile, matchedOpportunities, savedIds, applications]
+  );
+
   const toggleSave = async (id) => {
     const wasSaved = savedIds.has(id);
     setSavedIds((s) => { const n = new Set(s); wasSaved ? n.delete(id) : n.add(id); return n; }); // optimistic
@@ -1974,7 +2028,7 @@ function SizaMzansiApp() {
       setApplications((prev) => [{
         id: created.id, title: created.title, org: created.org, status: created.status,
         appliedDate: new Date(created.applied_date).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }),
-        interviewDate: "", notes: "",
+        appliedDateRaw: created.applied_date, interviewDate: "", interviewDateRaw: null, notes: "",
       }, ...prev]);
       setOverlay(null);
       setTab("applications");
@@ -2035,6 +2089,16 @@ function SizaMzansiApp() {
     body = <InterviewCoach opportunity={overlay.data} onBack={() => setOverlay(null)} />;
   } else if (overlay?.type === "scam") {
     body = <ScamChecker onBack={() => setOverlay(null)} />;
+  } else if (overlay?.type === "notifFeed") {
+    body = (
+      <NotificationsFeed
+        items={notifications}
+        onBack={() => setOverlay(null)}
+        onOpenOpportunity={(o) => setOverlay({ type: "opportunity", data: o })}
+        onOpenApplication={(a) => setOverlay({ type: "application", data: a })}
+        onGoToProfile={() => { setOverlay(null); setTab("profile"); }}
+      />
+    );
   } else if (overlay?.type === "notifications") {
     body = (
       <NotificationPreferences
@@ -2064,7 +2128,7 @@ function SizaMzansiApp() {
   } else {
     const openOpportunity = (id) => setOverlay({ type: "opportunity", data: matchedOpportunities.find((o) => o.id === id) });
     const tabBody =
-      tab === "home" ? <HomeTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} profile={profile} />
+      tab === "home" ? <HomeTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} profile={profile} notificationCount={notifications.length} onOpenNotifications={() => setOverlay({ type: "notifFeed" })} />
       : tab === "opportunities" ? <OpportunitiesTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} />
       : tab === "applications" ? <ApplicationsTab applications={applications} onOpenApp={(a) => setOverlay({ type: "application", data: a })} />
       : tab === "cv" ? <CvTab />
