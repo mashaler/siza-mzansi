@@ -63,6 +63,23 @@ create trigger on_auth_user_created
   for each row execute function public.handle_new_user();
 
 -- ---------------------------------------------------------------
+-- Notification preferences — added after initial launch. Using
+-- ALTER ... ADD COLUMN IF NOT EXISTS (rather than folding into the
+-- CREATE TABLE above) so this file stays safe to re-run on a
+-- database that was already set up before this column existed.
+-- ---------------------------------------------------------------
+alter table public.profiles
+  add column if not exists notification_prefs jsonb not null default '{
+    "newMatch": true,
+    "closingSoon": true,
+    "interviewReminder": true,
+    "followUp": true,
+    "profileIncomplete": true,
+    "cvTips": true,
+    "skillsRecommendation": true
+  }'::jsonb;
+
+-- ---------------------------------------------------------------
 -- OPPORTUNITIES
 -- Public read for everyone (no login needed to browse jobs).
 -- Only admins write — enforced at the app/service level for now;

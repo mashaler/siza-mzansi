@@ -155,3 +155,46 @@ export async function updateApplicationStatus(applicationId, status) {
   const { error } = await supabase.from("applications").update({ status }).eq("id", applicationId);
   if (error) throw error;
 }
+
+/* ---------------------------------------------------------------
+   NOTIFICATION PREFERENCES
+----------------------------------------------------------------*/
+export async function updateNotificationPrefs(userId, prefs) {
+  const { error } = await supabase.from("profiles").update({ notification_prefs: prefs }).eq("id", userId);
+  if (error) throw error;
+}
+
+/* ---------------------------------------------------------------
+   ACCOUNT — data export, password change, deletion
+----------------------------------------------------------------*/
+export async function exportUserData(userId) {
+  const [profileRes, savedRes, appsRes] = await Promise.all([
+    supabase.from("profiles").select("*").eq("id", userId).single(),
+    supabase.from("saved_opportunities").select("created_at, opportunities(title, org, type)").eq("user_id", userId),
+    supabase.from("applications").select("*").eq("user_id", userId),
+  ]);
+  if (profileRes.error) throw profileRes.error;
+  if (savedRes.error) throw savedRes.error;
+  if (appsRes.error) throw appsRes.error;
+  return {
+    exportedAt: new Date().toISOString(),
+    profile: profileRes.data,
+    savedOpportunities: savedRes.data,
+    applications: appsRes.data,
+  };
+}
+
+export async function updatePassword(newPassword) {
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw error;
+}
+
+export async function deleteAccount(accessToken) {
+  const res = await fetch("/api/delete-account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to delete account.");
+  return data;
+}

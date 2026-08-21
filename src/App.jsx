@@ -38,6 +38,31 @@ const T = {
 };
 
 /* ---------------------------------------------------------------
+   TIME-OF-DAY GREETING — real South Africa local time (SAST),
+   independent of whatever timezone the device itself is set to.
+----------------------------------------------------------------*/
+function getSAHour() {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Johannesburg", hour: "numeric", hour12: false }).formatToParts(new Date());
+  return parseInt(parts.find((p) => p.type === "hour")?.value ?? "12", 10);
+}
+
+function greetingForHour(hour) {
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  if (hour >= 17 && hour < 21) return "Good evening";
+  return "Good night";
+}
+
+function useSAGreeting() {
+  const [greeting, setGreeting] = useState(() => greetingForHour(getSAHour()));
+  useEffect(() => {
+    const id = setInterval(() => setGreeting(greetingForHour(getSAHour())), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  return greeting;
+}
+
+/* ---------------------------------------------------------------
    ADMIN-ONLY DEMO DATA
    Reported opportunities and platform stats don't have DB tables
    yet (no scam-report submission flow or usage-analytics queries
@@ -298,16 +323,35 @@ function Landing({ onStart }) {
    user id in the database, so an account is required past this point.
 ----------------------------------------------------------------*/
 function AuthScreen({ onBack }) {
-  const [mode, setMode] = useState("signup"); // signup | login
+  const [mode, setMode] = useState("signup"); // signup | login | forgot
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [resetSent, setResetSent] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     setError("");
+
+    if (mode === "forgot") {
+      if (!email.trim()) { setError("Enter your email."); return; }
+      setLoading(true);
+      try {
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: window.location.origin,
+        });
+        if (err) throw err;
+        setResetSent(true);
+      } catch (err) {
+        setError(err.message || "Something went wrong. Try again.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (!email.trim() || !password) { setError("Enter an email and password."); return; }
     if (password.length < 6) { setError("Password needs to be at least 6 characters."); return; }
     setLoading(true);
@@ -327,6 +371,55 @@ function AuthScreen({ onBack }) {
       setLoading(false);
     }
   };
+
+  if (mode === "forgot") {
+    return (
+      <div style={{ height: "100%", background: T.paper, display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "calc(env(safe-area-inset-top) + 16px) 20px 0" }}>
+          <button onClick={() => { setMode("login"); setError(""); setResetSent(false); }} aria-label="Back" style={{ color: T.ink, marginBottom: 20 }}><ChevronLeft size={22} /></button>
+        </div>
+        <div className="sm-scroll" style={{ flex: 1, overflowY: "auto", padding: "0 20px" }}>
+          <h1 className="f-display" style={{ fontSize: 22, fontWeight: 700, color: T.ink, marginBottom: 6 }}>Reset your password</h1>
+          <p className="f-body" style={{ fontSize: 13, color: T.inkMuted, marginBottom: 20 }}>Enter your email and we'll send a link to set a new password.</p>
+
+          {resetSent ? (
+            <div style={{ background: T.tealSoft, borderRadius: 12, padding: 14 }}>
+              <p className="f-body" style={{ fontSize: 13, color: T.teal, lineHeight: 1.6 }}>
+                If an account exists for <b>{email.trim()}</b>, a reset link is on its way. Check your inbox (and spam folder), open the link, and you'll be able to set a new password right here in the app.
+              </p>
+            </div>
+          ) : (
+            <form onSubmit={submit} style={{ display: "grid", gap: 14 }}>
+              <label className="f-body" style={{ display: "block" }}>
+                <span style={{ fontSize: 12, color: T.inkMuted, fontWeight: 600, marginBottom: 5, display: "block" }}>Email</span>
+                <div className="flex items-center" style={{ gap: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px" }}>
+                  <Mail size={15} color={T.inkFaint} />
+                  <input
+                    type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email"
+                    style={{ flex: 1, border: "none", outline: "none", fontSize: 14, color: T.ink, background: "transparent" }}
+                  />
+                </div>
+              </label>
+
+              {error && (
+                <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px" }}>
+                  <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+                </div>
+              )}
+
+              <button
+                type="submit" disabled={loading} className="f-body flex items-center justify-center"
+                style={{ width: "100%", gap: 8, background: T.amber, color: "#221503", fontWeight: 700, fontSize: 14.5, padding: "13px 0", borderRadius: 12, opacity: loading ? 0.7 : 1 }}
+              >
+                {loading && <Loader2 size={16} className="spin" />}
+                {loading ? "Sending..." : "Send reset link"}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: "100%", background: T.paper, display: "flex", flexDirection: "column" }}>
@@ -362,7 +455,14 @@ function AuthScreen({ onBack }) {
             </div>
           </label>
           <label className="f-body" style={{ display: "block" }}>
-            <span style={{ fontSize: 12, color: T.inkMuted, fontWeight: 600, marginBottom: 5, display: "block" }}>Password</span>
+            <div className="flex items-center justify-between" style={{ marginBottom: 5 }}>
+              <span style={{ fontSize: 12, color: T.inkMuted, fontWeight: 600 }}>Password</span>
+              {mode === "login" && (
+                <button type="button" onClick={() => { setMode("forgot"); setError(""); }} className="f-body" style={{ fontSize: 11.5, color: T.amberDeep, fontWeight: 600 }}>
+                  Forgot password?
+                </button>
+              )}
+            </div>
             <div className="flex items-center" style={{ gap: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px" }}>
               <Lock size={15} color={T.inkFaint} />
               <input
@@ -531,6 +631,7 @@ function Toggle({ checked, onChange, defaultOn = false, label }) {
 ----------------------------------------------------------------*/
 function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile }) {
   const [filter, setFilter] = useState("Recommended");
+  const greeting = useSAGreeting();
   const tabs = ["Recommended", "New", "Learnerships", "Internships", "Bursaries"];
   const filtered = useMemo(() => {
     if (filter === "Recommended") return [...opportunities].sort((a, b) => b.match - a.match).slice(0, 4);
@@ -545,7 +646,7 @@ function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile }) {
     <div style={{ padding: "18px 16px 90px" }}>
       <div className="flex items-center justify-between" style={{ marginBottom: 18 }}>
         <div>
-          <p className="f-body" style={{ fontSize: 13, color: T.inkMuted }}>Good morning</p>
+          <p className="f-body" style={{ fontSize: 13, color: T.inkMuted }}>{greeting}</p>
           <h1 className="f-display" style={{ fontSize: 21, fontWeight: 700, color: T.ink }}>{profile.name} 👋</h1>
         </div>
         <div style={{ position: "relative" }}>
@@ -909,36 +1010,112 @@ function CvTab() {
 }
 
 function CvReview() {
-  const [analysed, setAnalysed] = useState(false);
-  if (!analysed) {
+  const [cvText, setCvText] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("text/") && !file.name.endsWith(".txt")) {
+      setError("For now, upload a .txt file, or just paste your CV text below — PDF/Word parsing isn't wired up yet.");
+      return;
+    }
+    setError("");
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setCvText(String(ev.target?.result || ""));
+    reader.readAsText(file);
+  };
+
+  const analyse = async () => {
+    if (cvText.trim().length < 40) {
+      setError("Paste a bit more of your CV — at least a few sentences.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/cv-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cvText }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Something went wrong.");
+      setResult(data);
+    } catch (err) {
+      setError(err.message || "Couldn't analyze your CV. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!result) {
     return (
-      <div style={{ textAlign: "center", padding: "40px 12px" }}>
-        <div style={{ width: 56, height: 56, borderRadius: 16, background: T.surfaceSunk, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-          <Upload size={22} color={T.inkMuted} />
+      <div>
+        <div style={{ textAlign: "center", padding: "24px 12px 20px" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 16, background: T.surfaceSunk, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <Upload size={22} color={T.inkMuted} />
+          </div>
+          <p className="f-display" style={{ fontWeight: 700, fontSize: 15, color: T.ink, marginBottom: 4 }}>Paste or upload your CV</p>
+          <p className="f-body" style={{ fontSize: 13, color: T.inkMuted }}>Real AI review — we'll score it and never fabricate details.</p>
         </div>
-        <p className="f-display" style={{ fontWeight: 700, fontSize: 15, color: T.ink, marginBottom: 4 }}>Upload your existing CV</p>
-        <p className="f-body" style={{ fontSize: 13, color: T.inkMuted, marginBottom: 18 }}>PDF or Word, up to 5MB. We'll score it and never fabricate details.</p>
-        <button onClick={() => setAnalysed(true)} className="f-body" style={{ background: T.amber, color: "#221503", fontWeight: 700, fontSize: 13.5, padding: "11px 22px", borderRadius: 10 }}>
-          Upload CV_Lindiwe_Khumalo.pdf (demo)
+
+        <label className="f-body flex items-center justify-center" style={{ display: "flex", gap: 8, width: "100%", background: T.surface, border: `1px dashed ${T.border}`, borderRadius: 12, padding: "12px 0", marginBottom: 12, color: T.inkMuted, fontSize: 13, cursor: "pointer" }}>
+          <Upload size={15} />
+          {fileName || "Upload a .txt file"}
+          <input type="file" accept=".txt,text/plain" onChange={handleFile} style={{ display: "none" }} />
+        </label>
+
+        <textarea
+          value={cvText} onChange={(e) => { setCvText(e.target.value); setError(""); }} rows={8}
+          placeholder="...or paste your CV text here (work experience, education, skills, etc.)"
+          className="f-body" style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, fontSize: 13, color: T.ink, outline: "none", marginBottom: 12, resize: "vertical" }}
+        />
+
+        {error && (
+          <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+            <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+          </div>
+        )}
+
+        <button
+          onClick={analyse} disabled={loading} className="f-body flex items-center justify-center"
+          style={{ width: "100%", gap: 8, background: T.amber, color: "#221503", fontWeight: 700, fontSize: 13.5, padding: "12px 0", borderRadius: 10, opacity: loading ? 0.7 : 1 }}
+        >
+          {loading && <Loader2 size={16} className="spin" />}
+          {loading ? "Analyzing..." : "Analyze with AI"}
         </button>
       </div>
     );
   }
+
   return (
     <div>
       <div className="flex items-center" style={{ gap: 16, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 16, marginBottom: 16 }}>
-        <Ring value={78} size={64} stroke={6} color={matchColor(78)}>
-          <span className="f-mono" style={{ fontSize: 15, fontWeight: 600, color: matchColor(78) }}>78</span>
+        <Ring value={result.score} size={64} stroke={6} color={matchColor(result.score)}>
+          <span className="f-mono" style={{ fontSize: 15, fontWeight: 600, color: matchColor(result.score) }}>{result.score}</span>
         </Ring>
         <div>
-          <p className="f-display" style={{ fontWeight: 700, fontSize: 15, color: T.ink }}>CV Score: 78/100</p>
-          <p className="f-body" style={{ fontSize: 12, color: T.inkMuted }}>Good foundation, a few gaps to close</p>
+          <p className="f-display" style={{ fontWeight: 700, fontSize: 15, color: T.ink }}>CV Score: {result.score}/100</p>
+          <p className="f-body" style={{ fontSize: 12, color: T.inkMuted }}>Based on your actual CV text</p>
         </div>
       </div>
-      <ReviewBlock title="What you're doing well" icon={Check} color={T.teal} bg={T.tealSoft} items={["Clear, consistent formatting", "Quantified achievement in your testing project", "Skills section is easy to scan"]} />
-      <ReviewBlock title="What needs improvement" icon={AlertTriangle} color={T.amber} bg={T.amberSoft} items={["Professional summary is generic — make it specific to QA roles", "No dedicated skills-to-role mapping for ATS scanning"]} />
-      <ReviewBlock title="Recommended changes" icon={Sparkles} color={T.indigo} bg={T.indigoSoft} items={["Add measurable outcomes to each bullet ('reduced regression time by 20%')", "Move testing tools to the top of your skills list"]} />
-      <ReviewBlock title="Skills you may want to develop" icon={Award} color={T.coral} bg={T.coralSoft} items={["SQL for test data validation", "API testing with Postman"]} />
+      <ReviewBlock title="What you're doing well" icon={Check} color={T.teal} bg={T.tealSoft} items={result.strengths} />
+      <ReviewBlock title="What needs improvement" icon={AlertTriangle} color={T.amber} bg={T.amberSoft} items={result.improvements} />
+      <ReviewBlock title="Recommended changes" icon={Sparkles} color={T.indigo} bg={T.indigoSoft} items={result.recommendations} />
+      {result.skillsToDevelop?.length > 0 && (
+        <ReviewBlock title="Skills you may want to develop" icon={Award} color={T.coral} bg={T.coralSoft} items={result.skillsToDevelop} />
+      )}
+      <button
+        onClick={() => { setResult(null); setError(""); }} className="f-body"
+        style={{ width: "100%", marginTop: 4, color: T.inkMuted, fontWeight: 600, fontSize: 12.5, padding: "10px 0" }}
+      >
+        Review a different CV
+      </button>
     </div>
   );
 }
@@ -999,15 +1176,17 @@ function ProfileTab({ profile, email, onOpenTool, onToggleAdmin, onLogout }) {
 
       <p className="f-body" style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, margin: "18px 0 8px" }}>ACCOUNT</p>
       {[
-        { label: "Notification preferences", icon: Bell }, { label: "Privacy & data", icon: Shield }, { label: "Settings", icon: Settings },
+        { key: "notifications", label: "Notification preferences", icon: Bell },
+        { key: "privacy", label: "Privacy & data", icon: Shield },
+        { key: "settings", label: "Settings", icon: Settings },
       ].map((t) => (
-        <div key={t.label} className="flex items-center justify-between" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 13, marginBottom: 8 }}>
+        <button key={t.key} onClick={() => onOpenTool(t.key)} className="f-body" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 10, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 13, marginBottom: 8, textAlign: "left" }}>
           <div className="flex items-center" style={{ gap: 10 }}>
             <t.icon size={16} color={T.inkMuted} />
             <span style={{ fontSize: 13.5, color: T.ink }}>{t.label}</span>
           </div>
           <ChevronRight size={15} color={T.inkFaint} />
-        </div>
+        </button>
       ))}
 
       <button onClick={onToggleAdmin} className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, marginTop: 16, background: T.indigoSoft, color: T.indigo, fontWeight: 600, fontSize: 13, padding: "11px 0", borderRadius: 12 }}>
@@ -1016,6 +1195,261 @@ function ProfileTab({ profile, email, onOpenTool, onToggleAdmin, onLogout }) {
       <button onClick={onLogout} className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, marginTop: 10, color: T.coral, fontWeight: 600, fontSize: 13, padding: "10px 0" }}>
         <LogOut size={15} /> Log out
       </button>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   NOTIFICATION PREFERENCES — real toggles, saved to the profile row.
+----------------------------------------------------------------*/
+const NOTIFICATION_TYPES = [
+  { key: "newMatch", label: "New matching opportunity", desc: "When a job matches your profile well" },
+  { key: "closingSoon", label: "Closing soon", desc: "Reminders before an application deadline" },
+  { key: "interviewReminder", label: "Interview reminders", desc: "Upcoming interviews you've tracked" },
+  { key: "followUp", label: "Application follow-up", desc: "Nudges to follow up after applying" },
+  { key: "profileIncomplete", label: "Profile incomplete", desc: "Reminders to finish your profile" },
+  { key: "cvTips", label: "CV improvement tips", desc: "Suggestions to strengthen your CV" },
+  { key: "skillsRecommendation", label: "Recommended skills", desc: "New skills worth learning for your goals" },
+];
+
+function NotificationPreferences({ userId, initialPrefs, onBack, onSaved }) {
+  const [prefs, setPrefs] = useState(() => ({
+    newMatch: true, closingSoon: true, interviewReminder: true, followUp: true,
+    profileIncomplete: true, cvTips: true, skillsRecommendation: true,
+    ...(initialPrefs || {}),
+  }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const toggle = async (key) => {
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefs(next); // optimistic
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      await api.updateNotificationPrefs(userId, next);
+      setSaved(true);
+      onSaved?.(next);
+    } catch (err) {
+      setPrefs(prefs); // revert
+      setError(err.message || "Couldn't save that change. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ height: "100%", background: T.paper }}>
+      <TopBar title="Notification preferences" onBack={onBack} right={saving ? <Loader2 size={16} color={T.inkMuted} className="spin" /> : saved ? <Check size={16} color={T.teal} /> : null} />
+      <div style={{ padding: 16 }}>
+        {error && (
+          <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 14 }}>
+            <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+          </div>
+        )}
+        {NOTIFICATION_TYPES.map((n) => (
+          <div key={n.key} className="flex items-center justify-between" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
+            <div style={{ flex: 1, marginRight: 12 }}>
+              <p className="f-body" style={{ fontSize: 13.5, color: T.ink, fontWeight: 600 }}>{n.label}</p>
+              <p className="f-body" style={{ fontSize: 11.5, color: T.inkMuted }}>{n.desc}</p>
+            </div>
+            <Toggle checked={!!prefs[n.key]} onChange={() => toggle(n.key)} label={n.label} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   PRIVACY & DATA — real data export + real account deletion.
+   Deletion goes through /api/delete-account (see that file for why
+   it can't happen directly from the browser).
+----------------------------------------------------------------*/
+function PrivacyData({ userId, accessToken, onBack, onAccountDeleted }) {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const downloadData = async () => {
+    setExporting(true);
+    setExportError("");
+    try {
+      const data = await api.exportUserData(userId);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "siza-mzansi-my-data.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err.message || "Couldn't export your data. Try again.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const deleteAccount = async () => {
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await api.deleteAccount(accessToken);
+      onAccountDeleted();
+    } catch (err) {
+      setDeleteError(err.message || "Couldn't delete your account. Try again.");
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div style={{ height: "100%", background: T.paper }}>
+      <TopBar title="Privacy & data" onBack={onBack} />
+      <div style={{ padding: 16 }}>
+        <Section title="Your data">
+          <p className="f-body" style={{ fontSize: 13, color: T.inkMuted, lineHeight: 1.6, marginBottom: 12 }}>
+            Download everything Siza Mzansi has stored about you — your profile, saved opportunities, and applications — as a JSON file.
+          </p>
+          {exportError && (
+            <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+              <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{exportError}</p>
+            </div>
+          )}
+          <button onClick={downloadData} disabled={exporting} className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, background: T.ink, color: "#fff", fontWeight: 600, fontSize: 13.5, padding: "12px 0", borderRadius: 12, opacity: exporting ? 0.7 : 1 }}>
+            {exporting && <Loader2 size={16} className="spin" />}
+            <Download size={15} /> {exporting ? "Preparing..." : "Download my data"}
+          </button>
+        </Section>
+
+        <Section title="Legal">
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+            <p className="f-body" style={{ fontSize: 12.5, color: T.inkMuted, lineHeight: 1.6 }}>
+              Privacy Policy and Terms of Service are still being drafted for Siza Mzansi. This section will link to them once published, in line with South Africa's POPIA requirements.
+            </p>
+          </div>
+        </Section>
+
+        <Section title="Delete account">
+          <p className="f-body" style={{ fontSize: 13, color: T.inkMuted, lineHeight: 1.6, marginBottom: 12 }}>
+            Permanently deletes your account, profile, saved opportunities, and applications. This can't be undone.
+          </p>
+          {deleteError && (
+            <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+              <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{deleteError}</p>
+            </div>
+          )}
+          {!showConfirm ? (
+            <button onClick={() => setShowConfirm(true)} className="f-body" style={{ width: "100%", background: T.coralSoft, color: T.coral, fontWeight: 700, fontSize: 13.5, padding: "12px 0", borderRadius: 12 }}>
+              Delete my account
+            </button>
+          ) : (
+            <div style={{ background: T.coralSoft, borderRadius: 12, padding: 14 }}>
+              <p className="f-body" style={{ fontSize: 12.5, color: T.coral, marginBottom: 10 }}>
+                Type <b>DELETE</b> to confirm. This is permanent.
+              </p>
+              <input
+                value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="DELETE"
+                className="f-body" style={{ width: "100%", border: `1px solid ${T.coral}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, color: T.ink, outline: "none", marginBottom: 10, background: T.surface }}
+              />
+              <div className="flex" style={{ gap: 8 }}>
+                <button onClick={() => { setShowConfirm(false); setConfirmText(""); }} className="f-body" style={{ flex: 1, background: T.surface, color: T.inkMuted, fontWeight: 600, fontSize: 13, padding: "11px 0", borderRadius: 10 }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={deleteAccount} disabled={confirmText !== "DELETE" || deleting}
+                  className="f-body flex items-center justify-center" style={{ flex: 1, gap: 6, background: T.coral, color: "#fff", fontWeight: 700, fontSize: 13, padding: "11px 0", borderRadius: 10, opacity: confirmText !== "DELETE" || deleting ? 0.5 : 1 }}
+                >
+                  {deleting && <Loader2 size={14} className="spin" />}
+                  {deleting ? "Deleting..." : "Confirm delete"}
+                </button>
+              </div>
+            </div>
+          )}
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   SETTINGS — real password change, real account info.
+----------------------------------------------------------------*/
+function AccountSettings({ email, memberSince, onBack }) {
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccess(false);
+    if (newPassword.length < 6) { setError("Password needs to be at least 6 characters."); return; }
+    if (newPassword !== confirmPassword) { setError("Passwords don't match."); return; }
+    setSaving(true);
+    try {
+      await api.updatePassword(newPassword);
+      setSuccess(true);
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      setError(err.message || "Couldn't update your password. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ height: "100%", background: T.paper }}>
+      <TopBar title="Settings" onBack={onBack} />
+      <div style={{ padding: 16 }}>
+        <Section title="Account">
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, marginBottom: 4 }}>
+            <p style={{ fontSize: 11, color: T.inkFaint, fontWeight: 700, marginBottom: 3 }}>EMAIL</p>
+            <p className="f-body" style={{ fontSize: 13.5, color: T.ink, marginBottom: 12 }}>{email}</p>
+            <p style={{ fontSize: 11, color: T.inkFaint, fontWeight: 700, marginBottom: 3 }}>MEMBER SINCE</p>
+            <p className="f-body" style={{ fontSize: 13.5, color: T.ink }}>{memberSince}</p>
+          </div>
+        </Section>
+
+        <Section title="Change password">
+          <form onSubmit={changePassword} style={{ display: "grid", gap: 10 }}>
+            <input
+              type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New password"
+              autoComplete="new-password" className="f-body" style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, color: T.ink, outline: "none", background: T.surface }}
+            />
+            <input
+              type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm new password"
+              autoComplete="new-password" className="f-body" style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, color: T.ink, outline: "none", background: T.surface }}
+            />
+            {error && (
+              <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px" }}>
+                <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+              </div>
+            )}
+            {success && (
+              <div style={{ background: T.tealSoft, borderRadius: 10, padding: "10px 12px" }}>
+                <p className="f-body" style={{ fontSize: 12.5, color: T.teal }}>Password updated.</p>
+              </div>
+            )}
+            <button
+              type="submit" disabled={saving} className="f-body flex items-center justify-center"
+              style={{ width: "100%", gap: 8, background: T.ink, color: "#fff", fontWeight: 600, fontSize: 14, padding: "12px 0", borderRadius: 12, opacity: saving ? 0.7 : 1 }}
+            >
+              {saving && <Loader2 size={16} className="spin" />}
+              {saving ? "Updating..." : "Update password"}
+            </button>
+          </form>
+        </Section>
+      </div>
     </div>
   );
 }
@@ -1348,6 +1782,80 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+function SetNewPassword({ onDone }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (password.length < 6) { setError("Password needs to be at least 6 characters."); return; }
+    if (password !== confirm) { setError("Passwords don't match."); return; }
+    setLoading(true);
+    try {
+      await api.updatePassword(password);
+      onDone();
+    } catch (err) {
+      setError(err.message || "Couldn't update your password. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ height: "100%", background: T.paper, display: "flex", flexDirection: "column" }}>
+      <div className="sm-scroll" style={{ flex: 1, overflowY: "auto", padding: "calc(env(safe-area-inset-top) + 40px) 20px 20px" }}>
+        <div style={{ width: 44, height: 44, borderRadius: 12, background: T.tealSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+          <Lock size={20} color={T.teal} />
+        </div>
+        <h1 className="f-display" style={{ fontSize: 22, fontWeight: 700, color: T.ink, marginBottom: 6 }}>Set a new password</h1>
+        <p className="f-body" style={{ fontSize: 13, color: T.inkMuted, marginBottom: 24 }}>You're verified via the reset link — choose a new password to finish.</p>
+
+        <form onSubmit={submit} style={{ display: "grid", gap: 14 }}>
+          <label className="f-body" style={{ display: "block" }}>
+            <span style={{ fontSize: 12, color: T.inkMuted, fontWeight: 600, marginBottom: 5, display: "block" }}>New password</span>
+            <div className="flex items-center" style={{ gap: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px" }}>
+              <Lock size={15} color={T.inkFaint} />
+              <input
+                type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="At least 6 characters" autoComplete="new-password"
+                style={{ flex: 1, border: "none", outline: "none", fontSize: 14, color: T.ink, background: "transparent" }}
+              />
+              <button type="button" onClick={() => setShowPw((s) => !s)} aria-label={showPw ? "Hide password" : "Show password"} style={{ color: T.inkFaint }}>
+                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </label>
+          <label className="f-body" style={{ display: "block" }}>
+            <span style={{ fontSize: 12, color: T.inkMuted, fontWeight: 600, marginBottom: 5, display: "block" }}>Confirm new password</span>
+            <input
+              type={showPw ? "text" : "password"} value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Repeat password" autoComplete="new-password"
+              className="f-body" style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, color: T.ink, outline: "none" }}
+            />
+          </label>
+
+          {error && (
+            <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px" }}>
+              <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+            </div>
+          )}
+
+          <button
+            type="submit" disabled={loading} className="f-body flex items-center justify-center"
+            style={{ width: "100%", gap: 8, background: T.amber, color: "#221503", fontWeight: 700, fontSize: 14.5, padding: "13px 0", borderRadius: 12, opacity: loading ? 0.7 : 1 }}
+          >
+            {loading && <Loader2 size={16} className="spin" />}
+            {loading ? "Saving..." : "Set new password"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function FullScreenLoader({ label = "Loading..." }) {
   return (
     <div className="f-body" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: T.paper }}>
@@ -1390,12 +1898,14 @@ function SizaMzansiApp() {
   const [tab, setTab] = useState("home");
   const [overlay, setOverlay] = useState(null); // { type, data }
   const [adminMode, setAdminMode] = useState(false);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   // Track auth state.
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
       if (!newSession) {
         // Logged out — clear everything user-specific.
         setProfile(null);
@@ -1405,6 +1915,7 @@ function SizaMzansiApp() {
         setOverlay(null);
         setTab("home");
         setAuthView("landing");
+        setPasswordRecovery(false);
       }
     });
     return () => sub.subscription.unsubscribe();
@@ -1493,6 +2004,8 @@ function SizaMzansiApp() {
     body = authView === "landing"
       ? <Landing onStart={() => setAuthView("auth")} />
       : <AuthScreen onBack={() => setAuthView("landing")} />;
+  } else if (passwordRecovery) {
+    body = <SetNewPassword onDone={() => setPasswordRecovery(false)} />;
   } else if (dataLoading || !profile) {
     body = dataError
       ? <FullScreenError message={dataError} onRetry={() => loadUserData(session.user.id)} />
@@ -1522,6 +2035,32 @@ function SizaMzansiApp() {
     body = <InterviewCoach opportunity={overlay.data} onBack={() => setOverlay(null)} />;
   } else if (overlay?.type === "scam") {
     body = <ScamChecker onBack={() => setOverlay(null)} />;
+  } else if (overlay?.type === "notifications") {
+    body = (
+      <NotificationPreferences
+        userId={session.user.id}
+        initialPrefs={profile.raw?.notification_prefs}
+        onBack={() => setOverlay(null)}
+        onSaved={(prefs) => setProfile((p) => ({ ...p, raw: { ...p.raw, notification_prefs: prefs } }))}
+      />
+    );
+  } else if (overlay?.type === "privacy") {
+    body = (
+      <PrivacyData
+        userId={session.user.id}
+        accessToken={session.access_token}
+        onBack={() => setOverlay(null)}
+        onAccountDeleted={() => { /* onAuthStateChange fires once the auth user is gone on next check; sign out explicitly to be immediate */ supabase.auth.signOut(); }}
+      />
+    );
+  } else if (overlay?.type === "settings") {
+    body = (
+      <AccountSettings
+        email={session.user.email}
+        memberSince={new Date(session.user.created_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" })}
+        onBack={() => setOverlay(null)}
+      />
+    );
   } else {
     const openOpportunity = (id) => setOverlay({ type: "opportunity", data: matchedOpportunities.find((o) => o.id === id) });
     const tabBody =
