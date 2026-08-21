@@ -699,13 +699,41 @@ function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile, notifica
 /* ---------------------------------------------------------------
    OPPORTUNITIES TAB (search + filters)
 ----------------------------------------------------------------*/
-function OpportunitiesTab({ opportunities, saved, onToggleSave, onOpen }) {
+function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, onOpen }) {
   const [q, setQ] = useState("");
   const [type, setType] = useState("All");
+  const [results, setResults] = useState(null); // null = "using initialOpportunities", array = live search results
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const types = ["All", "Job", "Learnership", "Internship", "Bursary", "Graduate Programme"];
-  const filtered = opportunities.filter(
-    (o) => (type === "All" || o.type === type) && (o.title.toLowerCase().includes(q.toLowerCase()) || o.org.toLowerCase().includes(q.toLowerCase()))
-  );
+
+  const isFiltering = q.trim().length > 0 || type !== "All";
+
+  useEffect(() => {
+    if (!isFiltering) {
+      setResults(null); // back to the default, already-loaded, match-sorted list
+      setSearchError("");
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    setSearchError("");
+    const timer = setTimeout(async () => {
+      try {
+        const rows = await api.searchOpportunities({ query: q, type });
+        if (cancelled) return;
+        const scored = withMatchScores(profile?.raw, rows).sort((a, b) => b.match - a.match);
+        setResults(scored);
+      } catch (err) {
+        if (!cancelled) setSearchError(err.message || "Search failed. Try again.");
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 300); // debounce so we're not hitting the DB on every keystroke
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [q, type, isFiltering, profile]);
+
+  const list = results ?? [...initialOpportunities].sort((a, b) => b.match - a.match);
 
   return (
     <div style={{ padding: "18px 16px 90px" }}>
@@ -713,9 +741,10 @@ function OpportunitiesTab({ opportunities, saved, onToggleSave, onOpen }) {
       <div className="flex items-center" style={{ gap: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
         <Search size={16} color={T.inkFaint} />
         <input
-          value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title or organisation"
+          value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, org, skills, location..."
           className="f-body" style={{ flex: 1, border: "none", outline: "none", fontSize: 13.5, background: "transparent", color: T.ink }}
         />
+        {searching && <Loader2 size={15} color={T.inkFaint} className="spin" />}
       </div>
       <div className="flex sm-scroll" style={{ gap: 8, overflowX: "auto", marginBottom: 16 }}>
         {types.map((t) => (
@@ -731,11 +760,20 @@ function OpportunitiesTab({ opportunities, saved, onToggleSave, onOpen }) {
           </button>
         ))}
       </div>
-      <p className="f-mono" style={{ fontSize: 11.5, color: T.inkMuted, marginBottom: 10 }}>{filtered.length} results</p>
-      {filtered.length === 0 ? (
-        <EmptyState icon={Search} title="No matches" body="Try a different keyword or clear your filters." />
+
+      {searchError ? (
+        <EmptyState icon={AlertTriangle} title="Search failed" body={searchError} />
       ) : (
-        filtered.map((o) => <OpportunityCard key={o.id} o={o} saved={saved.has(o.id)} onToggleSave={onToggleSave} onOpen={onOpen} />)
+        <>
+          <p className="f-mono" style={{ fontSize: 11.5, color: T.inkMuted, marginBottom: 10 }}>
+            {list.length} result{list.length !== 1 ? "s" : ""}{isFiltering ? ", ranked by your profile match" : ""}
+          </p>
+          {list.length === 0 ? (
+            <EmptyState icon={Search} title="No matches" body="Try a different keyword or clear your filters." />
+          ) : (
+            list.map((o) => <OpportunityCard key={o.id} o={o} saved={saved.has(o.id)} onToggleSave={onToggleSave} onOpen={onOpen} />)
+          )}
+        </>
       )}
     </div>
   );
@@ -2129,7 +2167,7 @@ function SizaMzansiApp() {
     const openOpportunity = (id) => setOverlay({ type: "opportunity", data: matchedOpportunities.find((o) => o.id === id) });
     const tabBody =
       tab === "home" ? <HomeTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} profile={profile} notificationCount={notifications.length} onOpenNotifications={() => setOverlay({ type: "notifFeed" })} />
-      : tab === "opportunities" ? <OpportunitiesTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} />
+      : tab === "opportunities" ? <OpportunitiesTab initialOpportunities={matchedOpportunities} profile={profile} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} />
       : tab === "applications" ? <ApplicationsTab applications={applications} onOpenApp={(a) => setOverlay({ type: "application", data: a })} />
       : tab === "cv" ? <CvTab />
       : <ProfileTab profile={profile} email={session.user.email} onOpenTool={(k) => setOverlay({ type: k })} onToggleAdmin={() => setAdminMode(true)} onLogout={logout} />;

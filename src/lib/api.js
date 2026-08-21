@@ -20,13 +20,8 @@ export function toAppProfile(row) {
 /* ---------------------------------------------------------------
    OPPORTUNITIES (public read, no auth required)
 ----------------------------------------------------------------*/
-export async function fetchOpportunities() {
-  const { data, error } = await supabase
-    .from("opportunities")
-    .select("*")
-    .order("closing", { ascending: true });
-  if (error) throw error;
-  return (data || []).map((o) => ({
+function mapOpportunityRow(o) {
+  return {
     id: o.id,
     title: o.title,
     org: o.org,
@@ -42,7 +37,37 @@ export async function fetchOpportunities() {
     description: o.description,
     requirements: o.requirements || [],
     verified: o.verified,
-  }));
+  };
+}
+
+export async function fetchOpportunities() {
+  const { data, error } = await supabase
+    .from("opportunities")
+    .select("*")
+    .order("closing", { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapOpportunityRow);
+}
+
+// Real search: Postgres full-text search across title/org/description/
+// requirements/location (see search_vector in schema.sql) — not just a
+// substring match on whatever was already fetched. Falls back to a plain
+// fetch when there's no query text so type-only filtering still works.
+export async function searchOpportunities({ query, type } = {}) {
+  let q = supabase.from("opportunities").select("*");
+
+  if (query && query.trim()) {
+    q = q.textSearch("search_vector", query.trim(), { type: "websearch", config: "english" });
+  } else {
+    q = q.order("closing", { ascending: true });
+  }
+  if (type && type !== "All") {
+    q = q.eq("type", type);
+  }
+
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []).map(mapOpportunityRow);
 }
 
 /* ---------------------------------------------------------------
