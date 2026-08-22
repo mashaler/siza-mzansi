@@ -778,7 +778,7 @@ function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, 
     setExternalLoading(true);
     setExternalError("");
     try {
-      const jobs = await api.searchExternalJobs(q.trim(), profile?.raw?.city);
+      const jobs = await api.searchExternalJobs(q.trim());
       setExternalResults(jobs);
     } catch (err) {
       setExternalError(err.message || "External search failed.");
