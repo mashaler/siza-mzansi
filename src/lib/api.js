@@ -20,7 +20,7 @@ export function toAppProfile(row) {
 /* ---------------------------------------------------------------
    OPPORTUNITIES (public read, no auth required)
 ----------------------------------------------------------------*/
-function mapOpportunityRow(o) {
+export function mapOpportunityRow(o) {
   return {
     id: o.id,
     title: o.title,
@@ -37,6 +37,8 @@ function mapOpportunityRow(o) {
     description: o.description,
     requirements: o.requirements || [],
     verified: o.verified,
+    source: o.source || "demo",
+    applyUrl: o.apply_url || null,
   };
 }
 
@@ -226,4 +228,41 @@ export async function deleteAccount(accessToken) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to delete account.");
   return data;
+}
+
+/* ---------------------------------------------------------------
+   EXTERNAL JOBS (Adzuna, via serverless proxy)
+----------------------------------------------------------------*/
+async function getAccessToken() {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token || null;
+}
+
+// Real, live South African job listings — only called when the user
+// explicitly asks (never automatically), since the free quota is small.
+export async function searchExternalJobs(query, location) {
+  const token = await getAccessToken();
+  const params = new URLSearchParams({ q: query });
+  if (location) params.set("where", location);
+  const res = await fetch(`/api/search-jobs?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "External search failed.");
+  return data.jobs;
+}
+
+// Turns a tapped external listing into a real row in our own
+// opportunities table, so everything downstream (save, apply, track)
+// works exactly like a seeded/admin opportunity.
+export async function saveExternalJob(job) {
+  const token = await getAccessToken();
+  const res = await fetch("/api/save-external-job", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ job }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Couldn't save that listing.");
+  return mapOpportunityRow(data);
 }

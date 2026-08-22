@@ -5,11 +5,11 @@ import {
   MessageSquare, Plus, Sparkles, Award, BookOpen, Bell, ArrowRight,
   Upload, Download, ShieldCheck, ShieldAlert, ShieldQuestion, Users,
   BarChart3, Flag, Settings, LogOut, GraduationCap, Building2, Star,
-  Loader2, Mail, Lock, Eye, EyeOff
+  Loader2, Mail, Lock, Eye, EyeOff, Globe
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
 import * as api from "./lib/api";
-import { withMatchScores } from "./lib/matching";
+import { withMatchScores, scoreOpportunity } from "./lib/matching";
 import { buildNotifications } from "./lib/notifications";
 
 /* ---------------------------------------------------------------
@@ -220,7 +220,9 @@ function OpportunityCard({ o, saved, onToggleSave, onOpen }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="flex items-center" style={{ gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             <TypeTag type={o.type} />
-            {o.verified ? (
+            {o.source === "adzuna" ? (
+              <Pill bg={T.indigoSoft} color={T.indigo}><span className="flex items-center" style={{ gap: 3 }}><Globe size={11} /> External · Adzuna</span></Pill>
+            ) : o.verified ? (
               <Pill bg={T.tealSoft} color={T.teal}><span className="flex items-center" style={{ gap: 3 }}><ShieldCheck size={11} /> Verified</span></Pill>
             ) : (
               <Pill bg={T.surfaceSunk} color={T.inkMuted}><span className="flex items-center" style={{ gap: 3 }}><ShieldQuestion size={11} /> Needs review</span></Pill>
@@ -246,6 +248,37 @@ function OpportunityCard({ o, saved, onToggleSave, onOpen }) {
             <Star size={17} fill={saved ? T.amber : "none"} />
           </button>
         </div>
+      </div>
+    </button>
+  );
+}
+
+function ExternalJobCard({ job, profile, loading, onOpen }) {
+  const { match } = scoreOpportunity(profile?.raw, job);
+  return (
+    <button
+      onClick={() => onOpen(job)} disabled={loading} className="f-body"
+      style={{ display: "block", width: "100%", textAlign: "left", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, marginBottom: 10, opacity: loading ? 0.6 : 1 }}
+    >
+      <div className="flex items-start justify-between" style={{ gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Pill bg={T.indigoSoft} color={T.indigo} style={{ display: "inline-flex", alignItems: "center", gap: 3, marginBottom: 6 }}>
+            <Globe size={11} /> External · Adzuna
+          </Pill>
+          <h3 className="f-display" style={{ fontSize: 15, fontWeight: 700, color: T.ink, marginBottom: 2 }}>{job.title}</h3>
+          <p style={{ fontSize: 13, color: T.inkMuted, marginBottom: 8 }}>{job.org}</p>
+          <div className="flex items-center flex-wrap" style={{ gap: 10, fontSize: 12, color: T.inkMuted }}>
+            <span className="flex items-center" style={{ gap: 4 }}><MapPin size={12} /> {job.location}</span>
+            {job.salary && <span>{job.salary}</span>}
+          </div>
+        </div>
+        {loading ? (
+          <Loader2 size={20} color={T.inkMuted} className="spin" />
+        ) : (
+          <Ring value={match} size={44} stroke={5} color={matchColor(match)}>
+            <span className="f-mono" style={{ fontSize: 11, fontWeight: 600, color: matchColor(match) }}>{match}%</span>
+          </Ring>
+        )}
       </div>
     </button>
   );
@@ -699,12 +732,16 @@ function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile, notifica
 /* ---------------------------------------------------------------
    OPPORTUNITIES TAB (search + filters)
 ----------------------------------------------------------------*/
-function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, onOpen }) {
+function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, onOpen, onOpenExternal }) {
   const [q, setQ] = useState("");
   const [type, setType] = useState("All");
   const [results, setResults] = useState(null); // null = "using initialOpportunities", array = live search results
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [externalResults, setExternalResults] = useState(null);
+  const [externalLoading, setExternalLoading] = useState(false);
+  const [externalError, setExternalError] = useState("");
+  const [openingId, setOpeningId] = useState(null);
   const types = ["All", "Job", "Learnership", "Internship", "Bursary", "Graduate Programme"];
 
   const isFiltering = q.trim().length > 0 || type !== "All";
@@ -732,6 +769,34 @@ function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, 
     }, 300); // debounce so we're not hitting the DB on every keystroke
     return () => { cancelled = true; clearTimeout(timer); };
   }, [q, type, isFiltering, profile]);
+
+  // Reset external results whenever the search term changes — stale
+  // external results for a different query would be misleading.
+  useEffect(() => { setExternalResults(null); setExternalError(""); }, [q]);
+
+  const runExternalSearch = async () => {
+    setExternalLoading(true);
+    setExternalError("");
+    try {
+      const jobs = await api.searchExternalJobs(q.trim(), profile?.raw?.city);
+      setExternalResults(jobs);
+    } catch (err) {
+      setExternalError(err.message || "External search failed.");
+    } finally {
+      setExternalLoading(false);
+    }
+  };
+
+  const handleOpenExternal = async (job) => {
+    setOpeningId(job.externalId);
+    try {
+      await onOpenExternal(job);
+    } catch (err) {
+      setExternalError(err.message || "Couldn't open that listing.");
+    } finally {
+      setOpeningId(null);
+    }
+  };
 
   const list = results ?? [...initialOpportunities].sort((a, b) => b.match - a.match);
 
@@ -775,6 +840,45 @@ function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, 
           )}
         </>
       )}
+
+      {q.trim().length > 1 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ height: 1, background: T.border, margin: "8px 0 16px" }} />
+          {externalResults === null ? (
+            <button
+              onClick={runExternalSearch} disabled={externalLoading} className="f-body flex items-center justify-center"
+              style={{ width: "100%", gap: 8, background: T.indigoSoft, color: T.indigo, fontWeight: 600, fontSize: 13, padding: "12px 0", borderRadius: 12, opacity: externalLoading ? 0.7 : 1 }}
+            >
+              {externalLoading ? <Loader2 size={15} className="spin" /> : <Globe size={15} />}
+              {externalLoading ? "Searching live SA jobs..." : `Also search live SA jobs for "${q.trim()}"`}
+            </button>
+          ) : (
+            <>
+              <p className="f-mono" style={{ fontSize: 11.5, color: T.inkMuted, marginBottom: 10 }}>
+                {externalResults.length} live result{externalResults.length !== 1 ? "s" : ""} from Adzuna — tap to save and track
+              </p>
+              {externalResults.length === 0 ? (
+                <EmptyState icon={Globe} title="No live results" body="Try a broader search term." />
+              ) : (
+                externalResults.map((job) => (
+                  <ExternalJobCard
+                    key={job.externalId} job={job} profile={profile}
+                    loading={openingId === job.externalId} onOpen={handleOpenExternal}
+                  />
+                ))
+              )}
+            </>
+          )}
+          {externalError && (
+            <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px", marginTop: 8 }}>
+              <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{externalError}</p>
+            </div>
+          )}
+          <p className="f-body" style={{ fontSize: 11, color: T.inkFaint, marginTop: 10, textAlign: "center" }}>
+            Live search uses a shared free quota (~30/day) — if it stops working, it'll be back tomorrow.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -807,7 +911,9 @@ function OpportunityDetail({ o, saved, onToggleSave, onBack, onPrepInterview, ap
       <div className="sm-scroll" style={{ flex: 1, overflowY: "auto", padding: "16px 16px 100px" }}>
         <div className="flex items-center" style={{ gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
           <TypeTag type={o.type} />
-          {o.verified ? (
+          {o.source === "adzuna" ? (
+            <Pill bg={T.indigoSoft} color={T.indigo}><span className="flex items-center" style={{ gap: 3 }}><Globe size={11} /> External listing · via Adzuna</span></Pill>
+          ) : o.verified ? (
             <Pill bg={T.tealSoft} color={T.teal}><span className="flex items-center" style={{ gap: 3 }}><ShieldCheck size={11} /> Verified opportunity</span></Pill>
           ) : (
             <Pill bg={T.surfaceSunk} color={T.inkMuted}><span className="flex items-center" style={{ gap: 3 }}><ShieldQuestion size={11} /> Needs review</span></Pill>
@@ -866,6 +972,15 @@ function OpportunityDetail({ o, saved, onToggleSave, onBack, onPrepInterview, ap
         >
           <MessageSquare size={16} /> Prepare for this interview
         </button>
+
+        {o.applyUrl && (
+          <a
+            href={o.applyUrl} target="_blank" rel="noopener noreferrer"
+            className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, color: T.indigo, fontWeight: 600, fontSize: 13, padding: "12px 0", marginTop: 8 }}
+          >
+            View original listing <ArrowRight size={14} />
+          </a>
+        )}
       </div>
 
       <div className="flex" style={{ gap: 10, padding: 16, borderTop: `1px solid ${T.border}`, background: T.paper }}>
@@ -2075,6 +2190,19 @@ function SizaMzansiApp() {
     }
   };
 
+  // Tapping a live external (Adzuna) result writes it into our own
+  // opportunities table for real (upsert, so re-tapping the same
+  // listing doesn't duplicate it), then opens it through the exact
+  // same detail screen as any seeded/admin opportunity.
+  const openExternalOpportunity = async (job) => {
+    const row = await api.saveExternalJob(job); // let caller (OpportunitiesTab) handle/display errors
+    setOpportunities((prev) => {
+      const exists = prev.some((o) => o.id === row.id);
+      return exists ? prev.map((o) => (o.id === row.id ? row : o)) : [row, ...prev];
+    });
+    setOverlay({ type: "opportunity", data: { ...row, ...scoreOpportunity(profile?.raw, row) } });
+  };
+
   const changeAppStatus = async (id, status) => {
     setApplications((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a))); // optimistic
     try {
@@ -2167,7 +2295,7 @@ function SizaMzansiApp() {
     const openOpportunity = (id) => setOverlay({ type: "opportunity", data: matchedOpportunities.find((o) => o.id === id) });
     const tabBody =
       tab === "home" ? <HomeTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} profile={profile} notificationCount={notifications.length} onOpenNotifications={() => setOverlay({ type: "notifFeed" })} />
-      : tab === "opportunities" ? <OpportunitiesTab initialOpportunities={matchedOpportunities} profile={profile} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} />
+      : tab === "opportunities" ? <OpportunitiesTab initialOpportunities={matchedOpportunities} profile={profile} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} onOpenExternal={openExternalOpportunity} />
       : tab === "applications" ? <ApplicationsTab applications={applications} onOpenApp={(a) => setOverlay({ type: "application", data: a })} />
       : tab === "cv" ? <CvTab />
       : <ProfileTab profile={profile} email={session.user.email} onOpenTool={(k) => setOverlay({ type: k })} onToggleAdmin={() => setAdminMode(true)} onLogout={logout} />;
