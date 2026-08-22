@@ -196,6 +196,14 @@ export async function updateNotificationPrefs(userId, prefs) {
 }
 
 /* ---------------------------------------------------------------
+   CV BUILDER DATA
+----------------------------------------------------------------*/
+export async function updateCvData(userId, cvData) {
+  const { error } = await supabase.from("profiles").update({ cv_data: cvData }).eq("id", userId);
+  if (error) throw error;
+}
+
+/* ---------------------------------------------------------------
    ACCOUNT — data export, password change, deletion
 ----------------------------------------------------------------*/
 export async function exportUserData(userId) {

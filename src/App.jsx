@@ -11,6 +11,7 @@ import { supabase } from "./lib/supabaseClient";
 import * as api from "./lib/api";
 import { withMatchScores, scoreOpportunity } from "./lib/matching";
 import { buildNotifications } from "./lib/notifications";
+import { CV_SECTIONS, ENTRY_FIELDS, ADD_ENTRY_LABEL, isSectionComplete, cvCompletion, exportCvPdf } from "./lib/cv";
 
 /* ---------------------------------------------------------------
    DESIGN TOKENS
@@ -1105,21 +1106,56 @@ function ApplicationDetail({ app, onBack, onChangeStatus }) {
 /* ---------------------------------------------------------------
    CV TAB
 ----------------------------------------------------------------*/
-function CvTab() {
+function CvTab({ userId, profileName, cvData, onCvDataChange }) {
   const [mode, setMode] = useState("builder");
-  const sections = [
-    { name: "Personal information", done: true }, { name: "Professional summary", done: true },
-    { name: "Work experience", done: true }, { name: "Education", done: true },
-    { name: "Skills", done: true }, { name: "Certifications", done: false },
-    { name: "Projects", done: false }, { name: "Languages", done: true }, { name: "References", done: false },
-  ];
-  const donePct = Math.round((sections.filter((s) => s.done).length / sections.length) * 100);
+  const [activeSection, setActiveSection] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  const { done, total, pct } = cvCompletion(cvData);
+  const remaining = total - done;
+  const allDone = remaining === 0;
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await exportCvPdf(cvData, profileName);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const saveSection = async (key, sectionData) => {
+    const next = { ...cvData, [key]: sectionData };
+    setSaving(true);
+    setError("");
+    try {
+      await api.updateCvData(userId, next);
+      onCvDataChange(next);
+      setActiveSection(null);
+    } catch (err) {
+      setError(err.message || "Couldn't save. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (activeSection) {
+    return (
+      <CvSectionEditor
+        sectionKey={activeSection} data={cvData[activeSection]} saving={saving} error={error}
+        onBack={() => { setActiveSection(null); setError(""); }}
+        onSave={(sectionData) => saveSection(activeSection, sectionData)}
+      />
+    );
+  }
 
   return (
     <div style={{ padding: "18px 16px 90px" }}>
       <h1 className="f-display" style={{ fontSize: 20, fontWeight: 700, color: T.ink, marginBottom: 14 }}>Your CV</h1>
       <div className="flex" style={{ gap: 8, marginBottom: 18, background: T.surfaceSunk, borderRadius: 12, padding: 4 }}>
-        {[["builder", "Build with AI"], ["review", "AI review"]].map(([k, l]) => (
+        {[["builder", "Builder"], ["review", "AI review"]].map(([k, l]) => (
           <button key={k} onClick={() => setMode(k)} className="f-body" style={{ flex: 1, fontSize: 12.5, fontWeight: 600, padding: "8px 0", borderRadius: 9, background: mode === k ? T.surface : "transparent", color: mode === k ? T.ink : T.inkMuted }}>
             {l}
           </button>
@@ -1129,38 +1165,170 @@ function CvTab() {
       {mode === "builder" ? (
         <>
           <div className="flex items-center" style={{ gap: 14, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 16, marginBottom: 16 }}>
-            <Ring value={donePct} size={56} stroke={6} color={T.teal}>
-              <span className="f-mono" style={{ fontSize: 13, fontWeight: 600, color: T.teal }}>{donePct}%</span>
+            <Ring value={pct} size={56} stroke={6} color={T.teal}>
+              <span className="f-mono" style={{ fontSize: 13, fontWeight: 600, color: T.teal }}>{pct}%</span>
             </Ring>
             <div>
               <p className="f-display" style={{ fontWeight: 700, fontSize: 14, color: T.ink }}>CV completeness</p>
-              <p className="f-body" style={{ fontSize: 12, color: T.inkMuted }}>Finish remaining sections to unlock export</p>
+              <p className="f-body" style={{ fontSize: 12, color: T.inkMuted }}>{allDone ? "All sections complete — ready to export" : "Finish remaining sections to unlock export"}</p>
             </div>
           </div>
-          {sections.map((s) => (
-            <div key={s.name} className="flex items-center justify-between" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
-              <div className="flex items-center" style={{ gap: 10 }}>
-                <div style={{ width: 22, height: 22, borderRadius: "50%", background: s.done ? T.tealSoft : T.surfaceSunk, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {s.done ? <Check size={12} color={T.teal} /> : <Plus size={12} color={T.inkFaint} />}
+          {CV_SECTIONS.map((s) => {
+            const isDone = isSectionComplete(s.key, cvData);
+            return (
+              <button key={s.key} onClick={() => setActiveSection(s.key)} className="f-body" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8, textAlign: "left" }}>
+                <div className="flex items-center" style={{ gap: 10 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", background: isDone ? T.tealSoft : T.surfaceSunk, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {isDone ? <Check size={12} color={T.teal} /> : <Plus size={12} color={T.inkFaint} />}
+                  </div>
+                  <span className="f-body" style={{ fontSize: 13.5, color: T.ink }}>{s.label}</span>
+                  {s.optional && <span className="f-body" style={{ fontSize: 10.5, color: T.inkFaint }}>Optional</span>}
                 </div>
-                <span className="f-body" style={{ fontSize: 13.5, color: T.ink }}>{s.name}</span>
-              </div>
-              <ChevronRight size={15} color={T.inkFaint} />
-            </div>
-          ))}
+                <ChevronRight size={15} color={T.inkFaint} />
+              </button>
+            );
+          })}
           <div style={{ background: T.tealSoft, borderRadius: 12, padding: 12, marginTop: 4, marginBottom: 16 }} className="flex items-start">
             <Sparkles size={15} color={T.teal} style={{ marginTop: 1, marginRight: 8, flexShrink: 0 }} />
             <p className="f-body" style={{ fontSize: 12, color: T.teal, lineHeight: 1.5 }}>
-              AI-suggested text is always labelled <b>AI suggestion</b> and never invents jobs, employers or qualifications — you approve everything before it's added.
+              Tip: quantify achievements where you can — "reduced regression time by 20%" lands harder than "improved testing process."
             </p>
           </div>
-          <button className="f-body flex items-center justify-center" style={{ width: "100%", gap: 8, background: T.ink, color: "#fff", fontWeight: 600, fontSize: 14, padding: "13px 0", borderRadius: 12 }}>
-            <Download size={16} /> Export as PDF
+          <button
+            onClick={handleExport} disabled={!allDone || exporting}
+            className="f-body flex items-center justify-center"
+            style={{ width: "100%", gap: 8, background: allDone ? T.ink : T.surfaceSunk, color: allDone ? "#fff" : T.inkFaint, fontWeight: 600, fontSize: 14, padding: "13px 0", borderRadius: 12, opacity: exporting ? 0.7 : 1 }}
+          >
+            {exporting ? <Loader2 size={16} className="spin" /> : <Download size={16} />}
+            {exporting ? "Preparing PDF..." : allDone ? "Export as PDF" : `Finish ${remaining} more section${remaining !== 1 ? "s" : ""} to unlock`}
           </button>
         </>
       ) : (
         <CvReview />
       )}
+    </div>
+  );
+}
+
+const CV_SECTION_TITLES = Object.fromEntries(CV_SECTIONS.map((s) => [s.key, s.label]));
+
+function CvSectionEditor({ sectionKey, data, saving, error, onBack, onSave }) {
+  const isEntryType = !!ENTRY_FIELDS[sectionKey];
+  const isOptionalEntryType = ["certifications", "projects", "references"].includes(sectionKey);
+
+  const [personal, setPersonal] = useState(() => ({ fullName: "", email: "", phone: "", location: "", ...(sectionKey === "personal" ? data : {}) }));
+  const [summaryText, setSummaryText] = useState(sectionKey === "summary" ? (data?.text || "") : "");
+  const [listText, setListText] = useState((sectionKey === "skills" || sectionKey === "languages") ? (data?.text || "") : "");
+  const [entries, setEntries] = useState(() => (isEntryType && data?.entries?.length ? data.entries : []));
+  const [skipped, setSkipped] = useState(!!data?.skipped);
+
+  const addEntry = () => setEntries((prev) => [...prev, { id: `e${Date.now()}`, ...Object.fromEntries(ENTRY_FIELDS[sectionKey].map((f) => [f.key, ""])) }]);
+  const updateEntry = (id, key, val) => setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, [key]: val } : e)));
+  const removeEntry = (id) => setEntries((prev) => prev.filter((e) => e.id !== id));
+
+  const handleSave = () => {
+    if (sectionKey === "personal") return onSave(personal);
+    if (sectionKey === "summary") return onSave({ text: summaryText });
+    if (sectionKey === "skills" || sectionKey === "languages") return onSave({ text: listText });
+    return onSave({ skipped, entries: skipped ? [] : entries.filter((e) => Object.values(e).some((v) => String(v || "").trim())) });
+  };
+
+  return (
+    <div style={{ height: "100%", background: T.paper, display: "flex", flexDirection: "column" }}>
+      <TopBar title={CV_SECTION_TITLES[sectionKey]} onBack={onBack} />
+      <div className="sm-scroll" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        {sectionKey === "personal" && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <Field label="Full name" value={personal.fullName} onChange={(v) => setPersonal((p) => ({ ...p, fullName: v }))} placeholder="e.g. Lindiwe Khumalo" />
+            <Field label="Email" value={personal.email} onChange={(v) => setPersonal((p) => ({ ...p, email: v }))} placeholder="you@example.com" type="email" />
+            <Field label="Phone" value={personal.phone} onChange={(v) => setPersonal((p) => ({ ...p, phone: v }))} placeholder="082 000 0000" type="tel" />
+            <Field label="Location" value={personal.location} onChange={(v) => setPersonal((p) => ({ ...p, location: v }))} placeholder="Johannesburg, South Africa" />
+          </div>
+        )}
+
+        {sectionKey === "summary" && (
+          <div>
+            <p className="f-body" style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 10 }}>2–4 sentences summarising your experience and what you're looking for. At least 30 characters.</p>
+            <textarea
+              value={summaryText} onChange={(e) => setSummaryText(e.target.value)} rows={8}
+              placeholder="e.g. Detail-oriented QA graduate with hands-on testing experience from personal projects, looking to grow into a junior test automation role."
+              className="f-body" style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, fontSize: 13.5, color: T.ink, outline: "none", resize: "vertical", background: T.surface }}
+            />
+          </div>
+        )}
+
+        {(sectionKey === "skills" || sectionKey === "languages") && (
+          <div>
+            <p className="f-body" style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 10 }}>
+              {sectionKey === "skills" ? "List your skills, separated by commas. Add at least 3." : "List languages you speak, separated by commas."}
+            </p>
+            <textarea
+              value={listText} onChange={(e) => setListText(e.target.value)} rows={4}
+              placeholder={sectionKey === "skills" ? "Manual testing, SQL, Playwright, Excel" : "English, Zulu, Afrikaans"}
+              className="f-body" style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, fontSize: 13.5, color: T.ink, outline: "none", resize: "vertical", background: T.surface }}
+            />
+          </div>
+        )}
+
+        {isEntryType && (
+          <div>
+            {isOptionalEntryType && (
+              <div className="flex items-center justify-between" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+                <div style={{ flex: 1, marginRight: 12 }}>
+                  <p className="f-body" style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>I don't have this yet</p>
+                  <p className="f-body" style={{ fontSize: 11.5, color: T.inkMuted }}>Skip this section — it won't block your export</p>
+                </div>
+                <Toggle checked={skipped} onChange={setSkipped} label="Skip this section" />
+              </div>
+            )}
+            {!skipped && (
+              <>
+                {entries.map((entry) => (
+                  <div key={entry.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {ENTRY_FIELDS[sectionKey].map((f) => (
+                        <label key={f.key} className="f-body" style={{ display: "block" }}>
+                          <span style={{ fontSize: 11.5, color: T.inkMuted, fontWeight: 600, marginBottom: 4, display: "block" }}>{f.label}</span>
+                          {f.multiline ? (
+                            <textarea
+                              value={entry[f.key] || ""} onChange={(e) => updateEntry(entry.id, f.key, e.target.value)} rows={3} placeholder={f.placeholder || ""}
+                              style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 8, padding: 10, fontSize: 13, color: T.ink, outline: "none", resize: "vertical" }}
+                            />
+                          ) : (
+                            <input
+                              value={entry[f.key] || ""} onChange={(e) => updateEntry(entry.id, f.key, e.target.value)} placeholder={f.placeholder || ""}
+                              style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 10px", fontSize: 13, color: T.ink, outline: "none" }}
+                            />
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                    <button onClick={() => removeEntry(entry.id)} className="f-body" style={{ marginTop: 10, color: T.coral, fontSize: 12, fontWeight: 600 }}>Remove</button>
+                  </div>
+                ))}
+                <button onClick={addEntry} className="f-body flex items-center justify-center" style={{ width: "100%", gap: 6, background: T.surfaceSunk, color: T.ink, fontWeight: 600, fontSize: 13, padding: "11px 0", borderRadius: 10, marginBottom: 8 }}>
+                  <Plus size={14} /> {ADD_ENTRY_LABEL[sectionKey]}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <div style={{ background: T.coralSoft, borderRadius: 10, padding: "10px 12px", marginTop: 14 }}>
+            <p className="f-body" style={{ fontSize: 12.5, color: T.coral }}>{error}</p>
+          </div>
+        )}
+      </div>
+      <div style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
+        <button
+          onClick={handleSave} disabled={saving} className="f-body flex items-center justify-center"
+          style={{ width: "100%", gap: 8, background: T.ink, color: "#fff", fontWeight: 600, fontSize: 14, padding: "13px 0", borderRadius: 12, opacity: saving ? 0.7 : 1 }}
+        >
+          {saving && <Loader2 size={16} className="spin" />}
+          {saving ? "Saving..." : "Save section"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -2297,7 +2465,7 @@ function SizaMzansiApp() {
       tab === "home" ? <HomeTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} profile={profile} notificationCount={notifications.length} onOpenNotifications={() => setOverlay({ type: "notifFeed" })} />
       : tab === "opportunities" ? <OpportunitiesTab initialOpportunities={matchedOpportunities} profile={profile} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} onOpenExternal={openExternalOpportunity} />
       : tab === "applications" ? <ApplicationsTab applications={applications} onOpenApp={(a) => setOverlay({ type: "application", data: a })} />
-      : tab === "cv" ? <CvTab />
+      : tab === "cv" ? <CvTab userId={session.user.id} profileName={profile.name} cvData={profile.raw?.cv_data || {}} onCvDataChange={(next) => setProfile((p) => ({ ...p, raw: { ...p.raw, cv_data: next } }))} />
       : <ProfileTab profile={profile} email={session.user.email} onOpenTool={(k) => setOverlay({ type: k })} onToggleAdmin={() => setAdminMode(true)} onLogout={logout} />;
 
     body = (
