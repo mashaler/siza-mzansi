@@ -1106,11 +1106,8 @@ function ApplicationDetail({ app, onBack, onChangeStatus }) {
 /* ---------------------------------------------------------------
    CV TAB
 ----------------------------------------------------------------*/
-function CvTab({ userId, profileName, cvData, onCvDataChange }) {
+function CvTab({ profileName, cvData, onOpenSection }) {
   const [mode, setMode] = useState("builder");
-  const [activeSection, setActiveSection] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
 
   const { done, total, pct } = cvCompletion(cvData);
@@ -1125,31 +1122,6 @@ function CvTab({ userId, profileName, cvData, onCvDataChange }) {
       setExporting(false);
     }
   };
-
-  const saveSection = async (key, sectionData) => {
-    const next = { ...cvData, [key]: sectionData };
-    setSaving(true);
-    setError("");
-    try {
-      await api.updateCvData(userId, next);
-      onCvDataChange(next);
-      setActiveSection(null);
-    } catch (err) {
-      setError(err.message || "Couldn't save. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (activeSection) {
-    return (
-      <CvSectionEditor
-        sectionKey={activeSection} data={cvData[activeSection]} saving={saving} error={error}
-        onBack={() => { setActiveSection(null); setError(""); }}
-        onSave={(sectionData) => saveSection(activeSection, sectionData)}
-      />
-    );
-  }
 
   return (
     <div style={{ padding: "18px 16px 90px" }}>
@@ -1176,7 +1148,7 @@ function CvTab({ userId, profileName, cvData, onCvDataChange }) {
           {CV_SECTIONS.map((s) => {
             const isDone = isSectionComplete(s.key, cvData);
             return (
-              <button key={s.key} onClick={() => setActiveSection(s.key)} className="f-body" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8, textAlign: "left" }}>
+              <button key={s.key} onClick={() => onOpenSection(s.key)} className="f-body" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8, textAlign: "left" }}>
                 <div className="flex items-center" style={{ gap: 10 }}>
                   <div style={{ width: 22, height: 22, borderRadius: "50%", background: isDone ? T.tealSoft : T.surfaceSunk, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     {isDone ? <Check size={12} color={T.teal} /> : <Plus size={12} color={T.inkFaint} />}
@@ -2269,6 +2241,8 @@ function SizaMzansiApp() {
   const [overlay, setOverlay] = useState(null); // { type, data }
   const [adminMode, setAdminMode] = useState(false);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const [cvSaving, setCvSaving] = useState(false);
+  const [cvError, setCvError] = useState("");
 
   // Track auth state.
   useEffect(() => {
@@ -2371,6 +2345,21 @@ function SizaMzansiApp() {
     setOverlay({ type: "opportunity", data: { ...row, ...scoreOpportunity(profile?.raw, row) } });
   };
 
+  const saveCvSection = async (key, sectionData) => {
+    const next = { ...(profile.raw?.cv_data || {}), [key]: sectionData };
+    setCvSaving(true);
+    setCvError("");
+    try {
+      await api.updateCvData(session.user.id, next);
+      setProfile((p) => ({ ...p, raw: { ...p.raw, cv_data: next } }));
+      setOverlay(null); // back to the CV tab, now showing the updated completion state
+    } catch (err) {
+      setCvError(err.message || "Couldn't save. Try again.");
+    } finally {
+      setCvSaving(false);
+    }
+  };
+
   const changeAppStatus = async (id, status) => {
     setApplications((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a))); // optimistic
     try {
@@ -2433,6 +2422,15 @@ function SizaMzansiApp() {
         onGoToProfile={() => { setOverlay(null); setTab("profile"); }}
       />
     );
+  } else if (overlay?.type === "cvSection") {
+    const sectionKey = overlay.data.sectionKey;
+    body = (
+      <CvSectionEditor
+        sectionKey={sectionKey} data={profile.raw?.cv_data?.[sectionKey]} saving={cvSaving} error={cvError}
+        onBack={() => { setOverlay(null); setCvError(""); }}
+        onSave={(sectionData) => saveCvSection(sectionKey, sectionData)}
+      />
+    );
   } else if (overlay?.type === "notifications") {
     body = (
       <NotificationPreferences
@@ -2465,7 +2463,7 @@ function SizaMzansiApp() {
       tab === "home" ? <HomeTab opportunities={matchedOpportunities} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} profile={profile} notificationCount={notifications.length} onOpenNotifications={() => setOverlay({ type: "notifFeed" })} />
       : tab === "opportunities" ? <OpportunitiesTab initialOpportunities={matchedOpportunities} profile={profile} saved={savedIds} onToggleSave={toggleSave} onOpen={openOpportunity} onOpenExternal={openExternalOpportunity} />
       : tab === "applications" ? <ApplicationsTab applications={applications} onOpenApp={(a) => setOverlay({ type: "application", data: a })} />
-      : tab === "cv" ? <CvTab userId={session.user.id} profileName={profile.name} cvData={profile.raw?.cv_data || {}} onCvDataChange={(next) => setProfile((p) => ({ ...p, raw: { ...p.raw, cv_data: next } }))} />
+      : tab === "cv" ? <CvTab profileName={profile.name} cvData={profile.raw?.cv_data || {}} onOpenSection={(key) => setOverlay({ type: "cvSection", data: { sectionKey: key } })} />
       : <ProfileTab profile={profile} email={session.user.email} onOpenTool={(k) => setOverlay({ type: k })} onToggleAdmin={() => setAdminMode(true)} onLogout={logout} />;
 
     body = (
