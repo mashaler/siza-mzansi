@@ -723,9 +723,11 @@ function HomeTab({ opportunities, saved, onToggleSave, onOpen, profile, notifica
         ))}
       </div>
 
-      {filtered.map((o) => (
-        <OpportunityCard key={o.id} o={o} saved={saved.has(o.id)} onToggleSave={onToggleSave} onOpen={onOpen} />
-      ))}
+      <div className="card-grid">
+        {filtered.map((o) => (
+          <OpportunityCard key={o.id} o={o} saved={saved.has(o.id)} onToggleSave={onToggleSave} onOpen={onOpen} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -837,7 +839,9 @@ function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, 
           {list.length === 0 ? (
             <EmptyState icon={Search} title="No matches" body="Try a different keyword or clear your filters." />
           ) : (
-            list.map((o) => <OpportunityCard key={o.id} o={o} saved={saved.has(o.id)} onToggleSave={onToggleSave} onOpen={onOpen} />)
+            <div className="card-grid">
+              {list.map((o) => <OpportunityCard key={o.id} o={o} saved={saved.has(o.id)} onToggleSave={onToggleSave} onOpen={onOpen} />)}
+            </div>
           )}
         </>
       )}
@@ -861,12 +865,14 @@ function OpportunitiesTab({ initialOpportunities, profile, saved, onToggleSave, 
               {externalResults.length === 0 ? (
                 <EmptyState icon={Globe} title="No live results" body="Try a broader search term." />
               ) : (
-                externalResults.map((job) => (
-                  <ExternalJobCard
-                    key={job.externalId} job={job} profile={profile}
-                    loading={openingId === job.externalId} onOpen={handleOpenExternal}
-                  />
-                ))
+                <div className="card-grid">
+                  {externalResults.map((job) => (
+                    <ExternalJobCard
+                      key={job.externalId} job={job} profile={profile}
+                      loading={openingId === job.externalId} onOpen={handleOpenExternal}
+                    />
+                  ))}
+                </div>
               )}
             </>
           )}
@@ -2079,7 +2085,7 @@ function AdminDashboard({ onExit, opportunities }) {
 function BottomNav({ active, onChange }) {
   const items = [["home", Home, "Home"], ["opportunities", Briefcase, "Jobs"], ["applications", FileText, "Apps"], ["cv", GraduationCap, "CV"], ["profile", User, "Profile"]];
   return (
-    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: T.surface, borderTop: `1px solid ${T.border}`, display: "flex", paddingBottom: "env(safe-area-inset-bottom)" }}>
+    <div className="bottom-nav" style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: T.surface, borderTop: `1px solid ${T.border}`, display: "flex", paddingBottom: "env(safe-area-inset-bottom)" }}>
       {items.map(([key, Icon, label]) => {
         const isActive = active === key;
         return (
@@ -2088,6 +2094,38 @@ function BottomNav({ active, onChange }) {
               <Icon size={16} color={isActive ? T.amberDeep : T.inkFaint} />
             </div>
             <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? T.ink : T.inkFaint }}>{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Desktop-only sidebar — hidden below 900px via CSS (.side-nav), shown
+// alongside BottomNav (which hides itself at that same breakpoint), so
+// this is purely a CSS-driven swap, no JS viewport detection needed.
+function SideNav({ active, onChange }) {
+  const items = [
+    ["home", Home, "Home"], ["opportunities", Briefcase, "Opportunities"],
+    ["applications", FileText, "Applications"], ["cv", GraduationCap, "CV"], ["profile", User, "Profile"],
+  ];
+  return (
+    <div className="side-nav" style={{ width: 216, flexShrink: 0, height: "100%", background: T.surface, borderRight: `1px solid ${T.border}`, flexDirection: "column", padding: "22px 12px" }}>
+      <div className="flex items-center" style={{ gap: 8, padding: "0 10px", marginBottom: 28 }}>
+        <div style={{ width: 26, height: 26, borderRadius: 8, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Sparkles size={14} color={T.indigo} />
+        </div>
+        <span className="f-display" style={{ fontWeight: 700, fontSize: 14, color: T.ink }}>Siza Mzansi</span>
+      </div>
+      {items.map(([key, Icon, label]) => {
+        const isActive = active === key;
+        return (
+          <button
+            key={key} onClick={() => onChange(key)} className="f-body"
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", borderRadius: 10, marginBottom: 4, background: isActive ? T.amberSoft : "transparent", color: isActive ? T.amberDeep : T.inkMuted, fontWeight: 600, fontSize: 13.5, textAlign: "left" }}
+          >
+            <Icon size={17} />
+            {label}
           </button>
         );
       })}
@@ -2467,8 +2505,13 @@ function SizaMzansiApp() {
       : <ProfileTab profile={profile} email={session.user.email} onOpenTool={(k) => setOverlay({ type: k })} onToggleAdmin={() => setAdminMode(true)} onLogout={logout} />;
 
     body = (
-      <div style={{ height: "100%", position: "relative" }}>
-        <div className="sm-scroll" style={{ height: "100%", overflowY: "auto" }}>{tabBody}</div>
+      <div className="app-shell" style={{ height: "100%", position: "relative", display: "flex", flexDirection: "row" }}>
+        <SideNav active={tab} onChange={setTab} />
+        <div style={{ flex: 1, minWidth: 0, height: "100%" }}>
+          <div className="sm-scroll" style={{ height: "100%", overflowY: "auto" }}>
+            <div className="content-max">{tabBody}</div>
+          </div>
+        </div>
         <BottomNav active={tab} onChange={setTab} />
       </div>
     );

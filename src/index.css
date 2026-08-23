@@ -55,33 +55,63 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
-/* Desktop / tablet: show the app inside a phone-shaped preview frame */
+/* Below 900px: full-bleed mobile app (real phones, tablets, narrow
+   browser windows) — bottom nav, single column, safe-area insets. */
 .phone-outer {
   min-height: 100dvh;
-  align-items: center;
-  padding: 24px 0;
 }
 .phone-frame {
-  width: 390px;
-  height: 780px;
-  border-radius: 36px;
-  overflow: hidden;
-  border: 8px solid #1C2130;
-  box-shadow: 0 30px 60px -20px rgba(28, 33, 48, 0.35);
+  width: 100%;
+  height: 100dvh;
+  position: relative;
+}
+.side-nav {
+  display: none;
 }
 
-/* Real phones: fill the actual screen, no mock frame around it, and
-   respect the notch / home-indicator safe areas */
-@media (max-width: 480px) {
+/* 900px and up: a real desktop app shell, not a stretched phone.
+   Sidebar navigation instead of a bottom bar, content capped to a
+   readable width and centered, opportunity lists become a grid. */
+@media (min-width: 900px) {
   .phone-outer {
-    padding: 0;
-    min-height: 100dvh;
+    padding: 32px 24px;
+    align-items: center;
   }
   .phone-frame {
-    width: 100vw;
-    height: 100dvh;
-    border-radius: 0;
-    border: none;
-    box-shadow: none;
+    max-width: 1100px;
+    height: min(860px, 92dvh);
+    border-radius: 20px;
+    border: 1px solid #E7E2D3;
+    box-shadow: 0 30px 60px -25px rgba(28, 33, 48, 0.25);
+    overflow: hidden;
+  }
+  .side-nav {
+    display: flex !important;
+  }
+  .bottom-nav {
+    display: none !important;
+  }
+  /* Cap and center every screen's content by default... */
+  .phone-frame > * {
+    max-width: 720px;
+    margin: 0 auto;
+    height: 100%;
+  }
+  /* ...except the tab shell, which needs full width for its sidebar. */
+  .phone-frame > .app-shell {
+    max-width: none;
+    margin: 0;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .card-grid > * {
+    margin-bottom: 0 !important;
+  }
+  .content-max {
+    max-width: 720px;
+    margin: 0 auto;
   }
 }
