@@ -5,7 +5,7 @@ import {
   MessageSquare, Plus, Sparkles, Award, BookOpen, Bell, ArrowRight,
   Upload, Download, ShieldCheck, ShieldAlert, ShieldQuestion, Users,
   BarChart3, Flag, Settings, LogOut, GraduationCap, Building2, Star,
-  Loader2, Mail, Lock, Eye, EyeOff, Globe
+  Loader2, Mail, Lock, Eye, EyeOff, Globe, MessageCircle
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
 import * as api from "./lib/api";
@@ -62,6 +62,34 @@ function useSAGreeting() {
     return () => clearInterval(id);
   }, []);
   return greeting;
+}
+
+/* ---------------------------------------------------------------
+   WHATSAPP CONTACT — for the manual CV revamping service.
+   Number is 078 679 9418, formatted for wa.me as country code +
+   number with no leading 0.
+----------------------------------------------------------------*/
+const WHATSAPP_NUMBER = "27786799418";
+function whatsappLink(message) {
+  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+}
+
+function WhatsAppCta({ title, body, message }) {
+  return (
+    <a
+      href={whatsappLink(message)} target="_blank" rel="noopener noreferrer" className="f-body flex items-center"
+      style={{ gap: 12, background: "#E7F6EC", border: "1px solid #BFE6CC", borderRadius: 14, padding: 14, marginBottom: 16, textDecoration: "none" }}
+    >
+      <div style={{ width: 40, height: 40, borderRadius: 12, background: "#25D366", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <MessageCircle size={19} color="#fff" />
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 13.5, fontWeight: 700, color: "#1C2130" }}>{title}</p>
+        <p style={{ fontSize: 11.5, color: "#3E6B4F" }}>{body}</p>
+      </div>
+      <ArrowRight size={16} color="#1D9E52" style={{ flexShrink: 0 }} />
+    </a>
+  );
 }
 
 /* ---------------------------------------------------------------
@@ -1172,6 +1200,11 @@ function CvTab({ profileName, cvData, onOpenSection }) {
               Tip: quantify achievements where you can — "reduced regression time by 20%" lands harder than "improved testing process."
             </p>
           </div>
+          <WhatsAppCta
+            title="Want it done for you?"
+            body="Chat to us on WhatsApp — we'll personally revamp your CV and send it back."
+            message="Hi! I'd like help revamping my CV on Siza Mzansi."
+          />
           <button
             onClick={handleExport} disabled={!allDone || exporting}
             className="f-body flex items-center justify-center"
@@ -1412,6 +1445,11 @@ function CvReview() {
       {result.skillsToDevelop?.length > 0 && (
         <ReviewBlock title="Skills you may want to develop" icon={Award} color={T.coral} bg={T.coralSoft} items={result.skillsToDevelop} />
       )}
+      <WhatsAppCta
+        title="Want a human to polish it further?"
+        body="Send it to us on WhatsApp — we'll personally revamp your CV and send it back."
+        message={`Hi! I got a ${result.score}/100 CV score on Siza Mzansi and I'd like help revamping my CV.`}
+      />
       <button
         onClick={() => { setResult(null); setError(""); }} className="f-body"
         style={{ width: "100%", marginTop: 4, color: T.inkMuted, fontWeight: 600, fontSize: 12.5, padding: "10px 0" }}
